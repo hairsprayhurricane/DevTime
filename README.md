@@ -1,279 +1,210 @@
 # DevTime — Система учёта рабочего времени
 
-> Демо-версия без подключения к БД. Все данные хранятся в PHP-сессии и сбрасываются при её завершении.  
-> Проект рассчитан на последующую интеграцию с реляционной БД — все места подстановки запросов помечены комментарием `// TODO`.
+> Демо-версия без постоянного хранилища. Все данные живут в PHP-сессии и сбрасываются при её завершении. Точки интеграции с БД помечены комментариями `// TODO` в каждом файле.
 
 ---
 
-## Содержание
-
-1. [Роли и права доступа](#1-роли-и-права-доступа)
-2. [Архитектура файлов](#2-архитектура-файлов)
-3. [Модель данных (заглушка)](#3-модель-данных-заглушка)
-4. [Маршруты и навигация](#4-маршруты-и-навигация)
-5. [Бизнес-логика по страницам](#5-бизнес-логика-по-страницам)
-6. [Управление состоянием (сессия)](#6-управление-состоянием-сессия)
-7. [Экспорт данных](#7-экспорт-данных)
-8. [Запуск проекта](#8-запуск-проекта)
-9. [Интеграция с БД — чеклист](#9-интеграция-с-бд--чеклист)
-
----
-
-## 1. Роли и права доступа
-
-В системе три роли с жёсткой проверкой на уровне каждой страницы через хелпер `requireRole()`.
-
-| Роль | Константа | Точка входа после логина | Описание |
-|---|---|---|---|
-| Администратор | `admin` | `admin.php` | Полный CRUD по пользователям и командам. Не имеет доступа к дашборду и командам |
-| Тим Лид | `teamlead` | `dashboard.php` | Видит всю команду, управляет командами, экспортирует общий отчёт |
-| Сотрудник | `employee` | `dashboard.php` | Видит только себя, управляет только своим статусом, экспортирует только свой отчёт |
-
-**Матрица доступа к страницам:**
-
-| Страница | admin | teamlead | employee |
-|---|:---:|:---:|:---:|
-| `login.php` | ✅ | ✅ | ✅ |
-| `dashboard.php` | ❌ | ✅ | ✅ |
-| `team.php` | ❌ | ✅ | ✅ |
-| `reports.php` | ❌ | ✅ | ✅ |
-| `admin.php` | ✅ | ❌ | ❌ |
-
-Попытка обратиться к странице без нужной роли → редирект на `dashboard.php`.
-
----
-
-## 2. Архитектура файлов
+## 1. Архитектура и файловая структура
 
 ```
 /
-├── index.php        — роутер входа: редирект по роли (admin→admin.php, остальные→dashboard.php)
-├── login.php        — аутентификация, форма логин/пароль
-├── logout.php       — уничтожение сессии + редирект на login.php
-│
-├── data.php         — ядро: заглушки данных, инициализация сессии, все хелперы
-├── actions.php      — обработчик POST-запросов смены статуса (start/stop/break/resume)
-│
-├── dashboard.php    — главный дашборд (панель управления + таблица учёта времени)
-├── team.php         — страница команд (просмотр + CRUD команд для тим лида)
-├── reports.php      — страница экспорта отчётов в CSV/Excel
-└── admin.php        — административная панель (CRUD пользователей и команд)
+├── index.php        — Точка входа. Роутер по роли.
+├── login.php        — Аутентификация. Редирект после логина.
+├── logout.php       — Уничтожение сессии. Редирект на login.php.
+├── data.php         — Ядро: данные-заглушки, инициализация сессии, хелперы.
+├── actions.php      — Обработчик POST-действий над сменами (start/stop/break/resume).
+├── dashboard.php    — Дашборд. Панель управления + таблица учёта времени.
+├── team.php         — Страница команд.
+├── reports.php      — Экспорт отчёта в CSV/Excel.
+└── admin.php        — Панель администратора. Полный CRUD пользователей и команд.
 ```
 
-**Принцип зависимостей:** каждый файл начинается с `require_once 'data.php'`. Никакой другой файл не подключает данные напрямую — только через `data.php`.
+Приложение построено по принципу **MPA (Multi-Page Application)** — каждая страница самодостаточна, рендерится на сервере, взаимодействие через стандартные HTML-формы с методом `POST`.
 
 ---
 
-## 3. Модель данных (заглушка)
+## 2. Роли и права доступа
 
-Все данные объявлены в `data.php` и сразу записываются в `$_SESSION` при первой инициализации.
+| Роль | Идентификатор | Точка входа после логина | Доступные страницы |
+|---|---|---|---|
+| Администратор | `admin` | `admin.php` | только `admin.php` |
+| Тим Лид | `teamlead` | `dashboard.php` | dashboard, team, reports |
+| Сотрудник | `employee` | `dashboard.php` | dashboard, team, reports |
 
-### Таблица `users` (`$_SESSION['users']`)
+Проверка прав реализована через хелперы в `data.php`:
+- `requireAuth()` — проверяет наличие активной сессии, иначе редирект на `login.php`
+- `requireRole(...$roles)` — проверяет роль текущего пользователя, иначе редирект на `dashboard.php`
 
-| Поле | Тип | Описание |
+Каждая защищённая страница начинается с вызова одного из этих хелперов в самом верху файла.
+
+---
+
+## 3. Хранилище данных (сессия)
+
+Файл `data.php` при первом запуске инициализирует в `$_SESSION` три коллекции:
+
+### `$_SESSION['users']` — массив пользователей
+```
+id | login | password | name | role | team_id | position | project
+```
+
+### `$_SESSION['teams']` — массив команд
+```
+id | name | description | lead_id
+```
+
+### `$_SESSION['time_logs']` — записи рабочего времени
+```
+id | user_id | date | start | end | total_today | total_week | overtime
+```
+
+### `$_SESSION['statuses']` — текущий статус каждого пользователя
+```
+[user_id => 'working' | 'resting' | 'offline']
+```
+
+### `$_SESSION['session_starts']` — время начала текущей смены
+```
+[user_id => 'HH:MM' | '—']
+```
+
+> **Для интеграции с БД:** каждый из этих массивов заменяется на соответствующий SQL-запрос. Все места помечены `// TODO` с подсказкой запроса.
+
+---
+
+## 4. Поток аутентификации
+
+```
+GET /index.php
+    └─► Сессия есть?
+            ├─ НЕТ  ──► login.php (форма логин/пароль)
+            │                └─► POST → проверка credentials
+            │                          ├─ role=admin    ──► admin.php
+            │                          └─ иначе         ──► dashboard.php
+            ├─ admin    ──► admin.php
+            └─ иначе    ──► dashboard.php
+```
+
+---
+
+## 5. Поток смены (действия над временем)
+
+Все кнопки на `dashboard.php` отправляют форму на `actions.php`:
+
+```
+POST /actions.php
+  Параметры: action, employee_id, employee_name, redirect
+
+  action=start   → статус: offline → working, записать session_start=now()
+  action=stop    → статус: * → offline, очистить session_start
+  action=break   → статус: working → resting
+  action=resume  → статус: resting → working
+
+  → редирект на redirect?notify=<action>&emp=<name>
+```
+
+Права: сотрудник может менять **только свой** `employee_id` (принудительно перезаписывается в `actions.php`). Тим лид — любого.
+
+---
+
+## 6. Логика видимости данных по ролям
+
+### Dashboard
+| Что | Тим Лид | Сотрудник |
 |---|---|---|
-| `id` | int | Первичный ключ |
-| `login` | string | Логин для входа |
-| `password` | string | Пароль (plain-text в демо, заменить на хэш) |
-| `name` | string | Отображаемое имя (ФИО) |
-| `role` | enum | `admin` / `teamlead` / `employee` |
-| `team_id` | int\|null | FK → teams.id (null если без команды) |
-| `position` | string | Должность |
-| `project` | string | Проект |
+| Карточки в панели управления | Все сотрудники | Только своя карточка |
+| Строки в таблице учёта времени | Все сотрудники | Только своя строка |
+| Итоговые карточки (часы, переработка) | Агрегат по всем | Только свои данные |
 
-### Таблица `teams` (`$_SESSION['teams']`)
-
-| Поле | Тип | Описание |
+### Team
+| Что | Тим Лид | Сотрудник |
 |---|---|---|
-| `id` | int | Первичный ключ |
-| `name` | string | Название команды |
-| `description` | string | Описание |
-| `lead_id` | int | FK → users.id (тим лид команды) |
+| Видит команды | Все свои (где `lead_id = user.id`) | Команды где состоит (`team_id = team.id`) |
+| Статусы участников | Видит | Видит |
+| Создание / редактирование / удаление | Да | Нет |
 
-### Таблица `time_logs` (`$_SESSION['time_logs']`)
-
-| Поле | Тип | Описание |
-|---|---|---|
-| `id` | int | Первичный ключ |
-| `user_id` | int | FK → users.id |
-| `date` | date | Дата записи |
-| `start` | string | Время начала смены |
-| `end` | string\|null | Время окончания смены (null если смена активна) |
-| `total_today` | float | Итого часов за день |
-| `total_week` | float | Итого часов за неделю |
-| `overtime` | float | Переработка в часах |
-
-### Оперативное состояние (только сессия, не персистентно)
-
-| Ключ сессии | Тип | Описание |
-|---|---|---|
-| `$_SESSION['statuses']` | array[user_id → status] | Текущий статус каждого сотрудника: `working` / `resting` / `offline` |
-| `$_SESSION['session_starts']` | array[user_id → time] | Время начала текущей активной смены |
-| `$_SESSION['user_id']` | int | ID авторизованного пользователя |
+### Reports
+Оба могут скачать CSV. Фильтрация на уровне `reports.php`:
+- Тим Лид — все записи из `time_logs`
+- Сотрудник — только записи где `user_id = session.user_id`
 
 ---
 
-## 4. Маршруты и навигация
+## 7. Страница администратора (`admin.php`)
 
+Доступна **исключительно** роли `admin`. Имеет два таба:
+
+**Таб "Сотрудники"** — CRUD по таблице `users`:
+- Создать: форма в модальном окне → POST `form_action=create_user`
+- Редактировать: модал с предзаполненными полями → POST `form_action=edit_user`
+- Удалить: форма с подтверждением → POST `form_action=delete_user` (нельзя удалить себя)
+
+**Таб "Команды"** — CRUD по таблице `teams`:
+- Создать: POST `form_action=create_team`
+- Редактировать: POST `form_action=edit_team`
+- Удалить: POST `form_action=delete_team`
+
+Все изменения применяются к `$_SESSION` немедленно и видны на других страницах в рамках той же сессии.
+
+---
+
+## 8. Экспорт отчёта
+
+`reports.php` при POST с параметром `export=1` отдаёт HTTP-ответ с заголовками:
 ```
-GET  /login.php                  — форма входа
-POST /login.php                  — обработка логина → редирект по роли
-
-GET  /index.php                  — роутер (редирект по роли или на login)
-GET  /logout.php                 — выход
-
-GET  /dashboard.php              — дашборд
-POST /actions.php                — смена статуса сотрудника → редирект обратно
-
-GET  /team.php                   — просмотр команд
-POST /team.php                   — CRUD команд (form_action: create_team / edit_team / delete_team)
-
-GET  /reports.php                — форма экспорта
-POST /reports.php  [export=1]    — скачивание CSV-файла
-
-GET  /admin.php[?tab=users]      — список пользователей
-GET  /admin.php?tab=teams        — список команд
-POST /admin.php                  — CRUD (form_action: create_user / edit_user / delete_user / create_team / edit_team / delete_team)
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="devtime_report_<from>_<to>.csv"
 ```
 
-**Параметры редиректа после `actions.php`:**
-- `?notify={action}` — тип действия для показа уведомления (`start` / `stop` / `break` / `resume`)
-- `?emp={name}` — имя сотрудника для текста уведомления
+Файл содержит BOM (`\xEF\xBB\xBF`) для корректного отображения кириллицы в Microsoft Excel. Разделитель — точка с запятой (`;`) — стандарт для русской локали Excel.
 
 ---
 
-## 5. Бизнес-логика по страницам
+## 9. Тестовые учётные записи
 
-### `dashboard.php`
-
-- Определяет роль текущего пользователя
-- **teamlead** → `$visibleEmps` = все сотрудники, `$tableLogs` = все записи
-- **employee** → фильтрация по `$user['id']`, видит только свою карточку и свою строку в таблице
-- Сотрудник не может менять статус чужой карточки (кнопки заменяются на "Только просмотр")
-- Итоговые карточки (всего часов, переработка, работают сейчас) считаются динамически из `$tableLogs`
-- Авто-перезагрузка страницы каждые 30 секунд для синхронизации статусов
-
-### `team.php`
-
-- **teamlead** → видит только команды где `lead_id === $user['id']`, может создавать/редактировать/удалять
-- **employee** → видит только команды где его `team_id` совпадает с `id` команды, CRUD недоступен
-- Статусы участников отображаются в реальном времени из `$_SESSION['statuses']`
-- Модальные окна для создания/редактирования — без перезагрузки страницы, отправка через стандартный POST
-
-### `reports.php`
-
-- Принимает `date_from` и `date_to`
-- **teamlead** → выгружает все записи из `time_logs`
-- **employee** → фильтрует только записи с `user_id === $user['id']`
-- При подключении БД фильтрацию по датам перенести в SQL: `WHERE date BETWEEN :from AND :to`
-
-### `admin.php`
-
-- Два таба: `users` и `teams` (переключение через GET-параметр `?tab=`)
-- Все CRUD-операции POST → обработка на той же странице → редирект с сохранением таба
-- Защита от удаления самого себя: `if ($uid !== $user['id'])`
-- При создании нового пользователя сразу инициализируются его статус и время старта в сессии
+| Логин | Пароль | Роль | Команда |
+|---|---|---|---|
+| `admin` | `admin123` | Администратор | — |
+| `teamlead` | `lead123` | Тим Лид | Frontend Squad, Backend Guild |
+| `maria` | `pass123` | Сотрудник | Frontend Squad |
+| `dmitry` | `pass123` | Сотрудник | Frontend Squad |
+| `elena` | `pass123` | Сотрудник | Backend Guild |
+| `pavel` | `pass123` | Сотрудник | Backend Guild |
 
 ---
 
-## 6. Управление состоянием (сессия)
+## 10. Запуск локально
 
-Поскольку БД отсутствует, вся мутация данных происходит через `$_SESSION`. Схема работы:
-
-```
-Пользователь нажимает кнопку
-        ↓
-POST → actions.php
-        ↓
-Изменение $_SESSION['statuses'][$empId]
-Изменение $_SESSION['session_starts'][$empId]
-        ↓
-// TODO: здесь будет INSERT/UPDATE в БД
-        ↓
-Редирект обратно на dashboard.php?notify=...
-        ↓
-dashboard.php читает актуальное состояние из $_SESSION
-```
-
-**Важно:** при подключении БД сессию следует использовать только для хранения `user_id`. Все остальные данные (`statuses`, `users`, `teams`, `time_logs`) читать из БД при каждом запросе.
-
----
-
-## 7. Экспорт данных
-
-Экспорт реализован в `reports.php` как прямая отдача CSV через `php://output`.
-
-- Кодировка: UTF-8 с BOM (`\xEF\xBB\xBF`) — обязательно для корректного отображения кириллицы в Microsoft Excel
-- Разделитель: `;` (точка с запятой) — стандарт для Excel в русской локали
-- Заголовки: `Content-Type: text/csv` + `Content-Disposition: attachment`
-- Имя файла: `devtime_report_{date_from}_{date_to}.csv`
-
-При подключении БД заменить источник данных: вместо `$_SESSION['time_logs']` выполнять запрос с фильтром по датам и `user_id`.
-
----
-
-## 8. Запуск проекта
-
-**Вариант 1 — встроенный сервер PHP (рекомендуется для разработки):**
 ```bash
+# Требования: PHP >= 8.0
+php -v
+
+# Запуск встроенного сервера
 cd /путь/к/проекту
 php -S localhost:8000
-# Открыть http://localhost:8000
+
+# Открыть в браузере
+http://localhost:8000
 ```
 
-**Вариант 2 — XAMPP / MAMP:**
-Скопировать файлы в `htdocs`, запустить Apache, открыть `http://localhost/devtime`.
-
-**Требования:** PHP >= 8.0 (используется синтаксис match, стрелочные функции, named arguments).
-
-### Тестовые аккаунты
-
-| Логин | Пароль | Роль |
-|---|---|---|
-| `admin` | `admin123` | Администратор |
-| `teamlead` | `lead123` | Тим Лид |
-| `maria` | `pass123` | Сотрудник (команда 1) |
-| `dmitry` | `pass123` | Сотрудник (команда 1) |
-| `elena` | `pass123` | Сотрудник (команда 2) |
-| `pavel` | `pass123` | Сотрудник (команда 2) |
-
 ---
 
-## 9. Интеграция с БД — чеклист
+## 11. Интеграция с БД — что и где менять
 
-Все места для подстановки реальных запросов помечены в коде комментарием `// TODO`. Ниже сводный список:
+Все места интеграции помечены в коде. Краткая карта:
 
-### `data.php`
-- [ ] Заменить `$USERS_DB` на `SELECT * FROM users`
-- [ ] Заменить `$TEAMS_DB` на `SELECT * FROM teams`
-- [ ] Заменить `$TIME_LOGS_DB` на `SELECT * FROM time_logs WHERE date = TODAY()`
-- [ ] Загружать `statuses` из поля `status` в таблице `users` или отдельной таблице `user_sessions`
+| Файл | Что заменить |
+|---|---|
+| `data.php` | Массивы `$USERS_DB`, `$TEAMS_DB`, `$TIME_LOGS_DB` → SELECT-запросы при инициализации сессии |
+| `actions.php` | Комментарии TODO → INSERT/UPDATE в `time_logs`, `breaks` |
+| `admin.php` | Блоки `if ($action === '...')` → INSERT/UPDATE/DELETE запросы |
+| `team.php` | Блоки создания/редактирования команд → INSERT/UPDATE/DELETE |
+| `reports.php` | `$logs = $_SESSION['time_logs']` → SELECT с фильтром по датам и user_id |
 
-### `login.php`
-- [ ] Заменить перебор массива на `SELECT * FROM users WHERE login = ? AND password = hash(?)`
-- [ ] Использовать `password_hash()` / `password_verify()` для паролей
-
-### `actions.php`
-- [ ] `start` → `INSERT INTO time_logs (user_id, date, start) VALUES (?, NOW(), ?)`
-- [ ] `stop` → `UPDATE time_logs SET end = NOW(), total_today = TIMEDIFF(NOW(), start) WHERE user_id = ? AND date = TODAY()`
-- [ ] `break` → `INSERT INTO breaks (user_id, start) VALUES (?, NOW())`
-- [ ] `resume` → `UPDATE breaks SET end = NOW() WHERE user_id = ? AND end IS NULL`
-- [ ] Обновлять `status` в таблице `users` при каждом действии
-
-### `reports.php`
-- [ ] Заменить фильтрацию массива на `SELECT ... FROM time_logs WHERE date BETWEEN ? AND ? [AND user_id = ?]`
-
-### `admin.php`
-- [ ] `create_user` → `INSERT INTO users (...) VALUES (...)`
-- [ ] `edit_user` → `UPDATE users SET ... WHERE id = ?`
-- [ ] `delete_user` → `DELETE FROM users WHERE id = ?`
-- [ ] `create_team` → `INSERT INTO teams (...) VALUES (...)`
-- [ ] `edit_team` → `UPDATE teams SET ... WHERE id = ?`
-- [ ] `delete_team` → `DELETE FROM teams WHERE id = ?`
-
-### `team.php`
-- [ ] `create_team` / `edit_team` / `delete_team` — аналогично admin.php
-
----
-
-*DevTime — демо-версия. Версия документа: 1.0*
+Рекомендуемая схема БД (минимальная):
+```sql
+users      (id, login, password_hash, name, role, team_id, position, project)
+teams      (id, name, description, lead_id)
+time_logs  (id, user_id, date, start, end, total_today, total_week, overtime)
+breaks     (id, user_id, start, end)
+```
