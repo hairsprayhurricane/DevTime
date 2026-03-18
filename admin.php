@@ -5,64 +5,93 @@ requireRole('admin');
 $user = getCurrentUser();
 $msg  = '';
 $tab  = $_GET['tab'] ?? 'users';
+$db   = getDB();
 
 // ============================================================
-// CRUD — Пользователи
+// CRUD — Пользователи и Команды
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['form_action'] ?? '';
 
     // --- Создать пользователя ---
     if ($action === 'create_user') {
-        $newId = max(array_column($_SESSION['users'], 'id')) + 1;
-        $newUser = [
-            'id'       => $newId,
-            'login'    => trim($_POST['login'] ?? ''),
-            'password' => trim($_POST['password'] ?? ''),
-            'name'     => trim($_POST['name'] ?? ''),
-            'role'     => $_POST['role'] ?? 'employee',
-            'team_id'  => $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null,
-            'position' => trim($_POST['position'] ?? ''),
-            'project'  => trim($_POST['project'] ?? ''),
-        ];
-        if ($newUser['login'] && $newUser['name']) {
-            // TODO: INSERT INTO users VALUES (...)
-            $_SESSION['users'][] = $newUser;
-            $_SESSION['statuses'][$newId]       = 'offline';
-            $_SESSION['session_starts'][$newId] = '—';
-            $msg = '✅ Пользователь «' . htmlspecialchars($newUser['name']) . '» создан';
+        $login    = trim($_POST['login']    ?? '');
+        $name     = trim($_POST['name']     ?? '');
+        $password = trim($_POST['password'] ?? '');
+        $role     = $_POST['role']     ?? 'employee';
+        $teamId   = $_POST['team_id']  !== '' ? (int)$_POST['team_id'] : null;
+        $position = trim($_POST['position'] ?? '');
+        $project  = trim($_POST['project']  ?? '');
+
+        if ($login && $name && $password) {
+            $hash = password_hash($password, PASSWORD_BCRYPT);
+
+            $stmt = $db->prepare("
+                INSERT INTO users (full_name, position, project, login, password_hash)
+                VALUES (?, ?, ?, ?, ?) RETURNING id
+            ");
+            $stmt->execute([$name, $position, $project, $login, $hash]);
+            $newId = $stmt->fetchColumn();
+
+            // Назначаем роль
+            $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
+            $roleRow->execute([$role]);
+            $roleId = $roleRow->fetchColumn();
+            $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")
+               ->execute([$newId, $roleId]);
+
+            // Добавляем в команду
+            if ($teamId) {
+                $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")
+                   ->execute([$newId, $teamId]);
+            }
+
+            $msg = '✅ Пользователь «' . htmlspecialchars($name) . '» создан';
         }
         $tab = 'users';
     }
 
     // --- Редактировать пользователя ---
     if ($action === 'edit_user') {
-        $uid = (int)($_POST['user_id'] ?? 0);
-        foreach ($_SESSION['users'] as &$u) {
-            if ($u['id'] === $uid) {
-                // TODO: UPDATE users SET ... WHERE id=?
-                $u['name']     = trim($_POST['name']     ?? $u['name']);
-                $u['login']    = trim($_POST['login']    ?? $u['login']);
-                $u['role']     = $_POST['role']          ?? $u['role'];
-                $u['team_id']  = $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null;
-                $u['position'] = trim($_POST['position'] ?? $u['position']);
-                $u['project']  = trim($_POST['project']  ?? $u['project']);
-                if (!empty($_POST['password'])) $u['password'] = trim($_POST['password']);
-                $msg = '✅ Пользователь обновлён';
-                break;
-            }
+        $uid      = (int)$_POST['user_id'];
+        $name     = trim($_POST['name']     ?? '');
+        $login    = trim($_POST['login']    ?? '');
+        $role     = $_POST['role']    ?? 'employee';
+        $teamId   = $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null;
+        $position = trim($_POST['position'] ?? '');
+        $project  = trim($_POST['project']  ?? '');
+
+        $db->prepare("
+            UPDATE users SET full_name=?, login=?, position=?, project=? WHERE id=?
+        ")->execute([$name, $login, $position, $project, $uid]);
+
+        if (!empty($_POST['password'])) {
+            $db->prepare("UPDATE users SET password_hash=? WHERE id=?")
+               ->execute([password_hash($_POST['password'], PASSWORD_BCRYPT), $uid]);
         }
-        unset($u);
+
+        // Обновляем роль
+        $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
+        $roleRow->execute([$role]);
+        $roleId = $roleRow->fetchColumn();
+        $db->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
+        $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")->execute([$uid, $roleId]);
+
+        // Обновляем команду
+        $db->prepare("DELETE FROM team_members WHERE user_id = ?")->execute([$uid]);
+        if ($teamId) {
+            $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")->execute([$uid, $teamId]);
+        }
+
+        $msg = '✅ Пользователь обновлён';
         $tab = 'users';
     }
 
     // --- Удалить пользователя ---
     if ($action === 'delete_user') {
-        $uid = (int)($_POST['user_id'] ?? 0);
-        if ($uid !== $user['id']) { // нельзя удалить себя
-            // TODO: DELETE FROM users WHERE id=?
-            $_SESSION['users'] = array_values(array_filter($_SESSION['users'], fn($u) => $u['id'] !== $uid));
-            unset($_SESSION['statuses'][$uid]);
+        $uid = (int)$_POST['user_id'];
+        if ($uid !== $user['id']) {
+            $db->prepare("DELETE FROM users WHERE id = ?")->execute([$uid]);
             $msg = '🗑️ Пользователь удалён';
         }
         $tab = 'users';
@@ -70,15 +99,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // --- Создать команду ---
     if ($action === 'create_team') {
-        $newTeam = [
-            'id'          => max(array_column($_SESSION['teams'], 'id')) + 1,
-            'name'        => trim($_POST['team_name'] ?? ''),
-            'description' => trim($_POST['team_desc'] ?? ''),
-            'lead_id'     => (int)($_POST['lead_id'] ?? 0),
-        ];
-        if ($newTeam['name']) {
-            // TODO: INSERT INTO teams VALUES (...)
-            $_SESSION['teams'][] = $newTeam;
+        $name    = trim($_POST['team_name'] ?? '');
+        $desc    = trim($_POST['team_desc'] ?? '');
+        $leadId  = (int)($_POST['lead_id'] ?? 0);
+
+        if ($name) {
+            $stmt = $db->prepare("INSERT INTO teams (name, description) VALUES (?, ?) RETURNING id");
+            $stmt->execute([$name, $desc]);
+            $teamId = $stmt->fetchColumn();
+
+            if ($leadId) {
+                $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+                   ->execute([$leadId, $teamId]);
+            }
             $msg = '✅ Команда создана';
         }
         $tab = 'teams';
@@ -86,35 +119,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // --- Редактировать команду ---
     if ($action === 'edit_team') {
-        $tid = (int)($_POST['team_id'] ?? 0);
-        foreach ($_SESSION['teams'] as &$t) {
-            if ($t['id'] === $tid) {
-                // TODO: UPDATE teams SET ... WHERE id=?
-                $t['name']        = trim($_POST['team_name'] ?? $t['name']);
-                $t['description'] = trim($_POST['team_desc'] ?? $t['description']);
-                $t['lead_id']     = (int)($_POST['lead_id'] ?? $t['lead_id']);
-                $msg = '✅ Команда обновлена';
-                break;
-            }
-        }
-        unset($t);
+        $tid    = (int)$_POST['team_id'];
+        $name   = trim($_POST['team_name'] ?? '');
+        $desc   = trim($_POST['team_desc'] ?? '');
+        $leadId = (int)($_POST['lead_id'] ?? 0);
+
+        $db->prepare("UPDATE teams SET name=?, description=? WHERE id=?")->execute([$name, $desc, $tid]);
+        $msg = '✅ Команда обновлена';
         $tab = 'teams';
     }
 
     // --- Удалить команду ---
     if ($action === 'delete_team') {
-        $tid = (int)($_POST['team_id'] ?? 0);
-        // TODO: DELETE FROM teams WHERE id=?
-        $_SESSION['teams'] = array_values(array_filter($_SESSION['teams'], fn($t) => $t['id'] !== $tid));
+        $tid = (int)$_POST['team_id'];
+        $db->prepare("DELETE FROM teams WHERE id = ?")->execute([$tid]);
         $msg = '🗑️ Команда удалена';
         $tab = 'teams';
     }
 }
 
-// Тим лиды для выпадающего списка
-$teamLeads = array_filter($_SESSION['users'], fn($u) => $u['role'] === 'teamlead');
-$currentDate  = date('d.m.Y');
-$currentTime  = date('H:i');
+$allUsers  = getAllUsers();
+$allTeams  = getAllTeams();
+$teamLeads = array_filter($allUsers, fn($u) => $u['role'] === 'teamlead');
+
+$currentDate = date('d.m.Y');
+$currentTime = date('H:i');
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -140,16 +169,13 @@ $currentTime  = date('H:i');
         .current-date strong { color: #1e293b; font-size: 1.2rem; }
         .week-info { background-color: #fef3c7; padding: 8px 15px; border-radius: 50px; font-size: 0.9rem; color: #92400e; }
         .page-content { padding: 40px 0; }
-        /* Табы */
-        .tabs { display: flex; gap: 5px; margin-bottom: 30px; background: #fff; padding: 6px; border-radius: 14px; border: 1px solid #e2e8f0; display: inline-flex; }
+        .tabs { display: inline-flex; gap: 5px; margin-bottom: 30px; background: #fff; padding: 6px; border-radius: 14px; border: 1px solid #e2e8f0; }
         .tab-btn { padding: 10px 24px; border: none; border-radius: 10px; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s; background: transparent; color: #64748b; }
         .tab-btn.active { background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; }
         .tab-btn:hover:not(.active) { background: #f1f5f9; }
-        /* Секция */
         .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
         .section-header h2 { font-size: 1.6rem; color: #0f172a; }
         .btn-new { padding: 12px 24px; background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; border: none; border-radius: 12px; font-weight: 600; cursor: pointer; }
-        /* Карточки */
         .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
         .admin-card { background: #fff; border-radius: 18px; padding: 25px; box-shadow: 0 6px 20px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
         .card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
@@ -165,7 +191,7 @@ $currentTime  = date('H:i');
         .btn-edit { background: #e0f2fe; color: #0369a1; }
         .btn-edit:hover { background: #bae6fd; }
         .btn-del  { background: #fee2e2; color: #dc2626; }
-        .btn-del:hover  { background: #fecaca; }
+        .btn-del:hover { background: #fecaca; }
         .card-fields { display: flex; flex-direction: column; gap: 8px; }
         .field-row { display: flex; justify-content: space-between; font-size: 0.88rem; padding: 8px 12px; background: #f8fafc; border-radius: 8px; }
         .field-row .label { color: #64748b; }
@@ -174,7 +200,6 @@ $currentTime  = date('H:i');
         .role-admin    { background: #fef3c7; color: #92400e; }
         .role-teamlead { background: #ede9fe; color: #5b21b6; }
         .role-employee { background: #e0f2fe; color: #0369a1; }
-        /* Модалы */
         .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 500; align-items: center; justify-content: center; }
         .modal-overlay.open { display: flex; }
         .modal { background: #fff; border-radius: 20px; padding: 35px; width: 100%; max-width: 520px; box-shadow: 0 30px 60px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; }
@@ -228,20 +253,20 @@ $currentTime  = date('H:i');
         </div>
 
         <?php if ($tab === 'users'): ?>
-        <!-- ================= ПОЛЬЗОВАТЕЛИ ================= -->
         <div class="section-header">
-            <h2>👤 Все пользователи (<?php echo count($_SESSION['users']); ?>)</h2>
+            <h2>👤 Все пользователи (<?php echo count($allUsers); ?>)</h2>
             <button class="btn-new" onclick="openModal('createUserModal')">+ Добавить сотрудника</button>
         </div>
 
         <div class="cards-grid">
-            <?php foreach ($_SESSION['users'] as $u):
+            <?php foreach ($allUsers as $u):
                 $teamName = '—';
                 if ($u['team_id']) {
-                    foreach ($_SESSION['teams'] as $t) {
+                    foreach ($allTeams as $t) {
                         if ($t['id'] === $u['team_id']) { $teamName = $t['name']; break; }
                     }
                 }
+                $status = getUserStatus($u['id']);
             ?>
             <div class="admin-card">
                 <div class="card-head">
@@ -259,8 +284,8 @@ $currentTime  = date('H:i');
                             '<?php echo addslashes($u['login']); ?>',
                             '<?php echo $u['role']; ?>',
                             '<?php echo $u['team_id'] ?? ''; ?>',
-                            '<?php echo addslashes($u['position']); ?>',
-                            '<?php echo addslashes($u['project']); ?>'
+                            '<?php echo addslashes($u['position'] ?? ''); ?>',
+                            '<?php echo addslashes($u['project'] ?? ''); ?>'
                         )">✏️</button>
                         <?php if ($u['id'] !== $user['id']): ?>
                         <form method="POST" style="display:inline" onsubmit="return confirm('Удалить пользователя?')">
@@ -282,8 +307,7 @@ $currentTime  = date('H:i');
                     <div class="field-row"><span class="label">Проект</span><span class="value"><?php echo htmlspecialchars($u['project'] ?: '—'); ?></span></div>
                     <div class="field-row"><span class="label">Команда</span><span class="value"><?php echo htmlspecialchars($teamName); ?></span></div>
                     <div class="field-row"><span class="label">Статус</span><span class="value"><?php
-                        $st = $_SESSION['statuses'][$u['id']] ?? 'offline';
-                        echo match($st) { 'working' => '🟢 Работает', 'resting' => '🟡 Перерыв', default => '⚫ Не в сети' };
+                        echo match($status) { 'working' => '🟢 Работает', 'resting' => '🟡 Перерыв', default => '⚫ Не в сети' };
                     ?></span></div>
                 </div>
             </div>
@@ -291,18 +315,17 @@ $currentTime  = date('H:i');
         </div>
 
         <?php else: ?>
-        <!-- ================= КОМАНДЫ ================= -->
         <div class="section-header">
-            <h2>👥 Все команды (<?php echo count($_SESSION['teams']); ?>)</h2>
+            <h2>👥 Все команды (<?php echo count($allTeams); ?>)</h2>
             <button class="btn-new" onclick="openModal('createTeamModal')">+ Создать команду</button>
         </div>
 
         <div class="cards-grid">
-            <?php foreach ($_SESSION['teams'] as $team):
+            <?php foreach ($allTeams as $team):
                 $members = getMembersOfTeam($team['id']);
-                $lead = null;
-                foreach ($_SESSION['users'] as $u) {
-                    if ($u['id'] === $team['lead_id']) { $lead = $u; break; }
+                $lead    = null;
+                foreach ($allUsers as $u) {
+                    if ($u['role'] === 'teamlead') { $lead = $u; break; }
                 }
             ?>
             <div class="admin-card">
@@ -311,15 +334,14 @@ $currentTime  = date('H:i');
                         <div class="card-avatar team">👥</div>
                         <div class="card-info">
                             <h3><?php echo htmlspecialchars($team['name']); ?></h3>
-                            <p><?php echo htmlspecialchars($team['description']); ?></p>
+                            <p><?php echo htmlspecialchars($team['description'] ?? ''); ?></p>
                         </div>
                     </div>
                     <div class="card-actions">
                         <button class="btn-sm btn-edit" onclick="openEditTeamModal(
                             <?php echo $team['id']; ?>,
                             '<?php echo addslashes($team['name']); ?>',
-                            '<?php echo addslashes($team['description']); ?>',
-                            <?php echo $team['lead_id']; ?>
+                            '<?php echo addslashes($team['description'] ?? ''); ?>'
                         )">✏️</button>
                         <form method="POST" style="display:inline" onsubmit="return confirm('Удалить команду?')">
                             <input type="hidden" name="form_action" value="delete_team">
@@ -329,11 +351,9 @@ $currentTime  = date('H:i');
                     </div>
                 </div>
                 <div class="card-fields">
-                    <div class="field-row"><span class="label">Тим Лид</span><span class="value"><?php echo $lead ? htmlspecialchars($lead['name']) : '—'; ?></span></div>
                     <div class="field-row"><span class="label">Участников</span><span class="value"><?php echo count($members); ?></span></div>
                     <div class="field-row"><span class="label">Работают сейчас</span><span class="value"><?php echo count(array_filter($members, fn($m) => $m['status'] === 'working')); ?></span></div>
                 </div>
-                <!-- Участники -->
                 <div style="margin-top:15px;">
                     <?php foreach ($members as $m): ?>
                     <div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.88rem;">
@@ -353,9 +373,7 @@ $currentTime  = date('H:i');
 </section>
 
 <footer>
-    <div class="container">
-        <p>🛡️ DevTime Admin Panel</p>
-    </div>
+    <div class="container"><p>🛡️ DevTime Admin Panel</p></div>
 </footer>
 
 <!-- Модал: создать пользователя -->
@@ -368,8 +386,8 @@ $currentTime  = date('H:i');
                 <div class="form-group full"><label>ФИО</label><input type="text" name="name" placeholder="Иван Иванов" required></div>
                 <div class="form-group"><label>Логин</label><input type="text" name="login" required></div>
                 <div class="form-group"><label>Пароль</label><input type="password" name="password" required></div>
-                <div class="form-group"><label>Должность</label><input type="text" name="position" placeholder="Frontend Developer"></div>
-                <div class="form-group"><label>Проект</label><input type="text" name="project" placeholder="Web App"></div>
+                <div class="form-group"><label>Должность</label><input type="text" name="position"></div>
+                <div class="form-group"><label>Проект</label><input type="text" name="project"></div>
                 <div class="form-group"><label>Роль</label>
                     <select name="role">
                         <option value="employee">Сотрудник</option>
@@ -380,7 +398,7 @@ $currentTime  = date('H:i');
                 <div class="form-group"><label>Команда</label>
                     <select name="team_id">
                         <option value="">— без команды —</option>
-                        <?php foreach ($_SESSION['teams'] as $t): ?>
+                        <?php foreach ($allTeams as $t): ?>
                         <option value="<?php echo $t['id']; ?>"><?php echo htmlspecialchars($t['name']); ?></option>
                         <?php endforeach; ?>
                     </select>
@@ -404,7 +422,7 @@ $currentTime  = date('H:i');
             <div class="form-grid">
                 <div class="form-group full"><label>ФИО</label><input type="text" name="name" id="editUserName" required></div>
                 <div class="form-group"><label>Логин</label><input type="text" name="login" id="editUserLogin" required></div>
-                <div class="form-group"><label>Новый пароль (необяз.)</label><input type="password" name="password" placeholder="оставьте пустым"></div>
+                <div class="form-group"><label>Новый пароль (необяз.)</label><input type="password" name="password"></div>
                 <div class="form-group"><label>Должность</label><input type="text" name="position" id="editUserPosition"></div>
                 <div class="form-group"><label>Проект</label><input type="text" name="project" id="editUserProject"></div>
                 <div class="form-group"><label>Роль</label>
@@ -417,7 +435,7 @@ $currentTime  = date('H:i');
                 <div class="form-group"><label>Команда</label>
                     <select name="team_id" id="editUserTeam">
                         <option value="">— без команды —</option>
-                        <?php foreach ($_SESSION['teams'] as $t): ?>
+                        <?php foreach ($allTeams as $t): ?>
                         <option value="<?php echo $t['id']; ?>"><?php echo htmlspecialchars($t['name']); ?></option>
                         <?php endforeach; ?>
                     </select>
@@ -467,13 +485,6 @@ $currentTime  = date('H:i');
             <div class="form-grid">
                 <div class="form-group full"><label>Название</label><input type="text" name="team_name" id="editTeamName" required></div>
                 <div class="form-group full"><label>Описание</label><input type="text" name="team_desc" id="editTeamDesc"></div>
-                <div class="form-group full"><label>Тим Лид</label>
-                    <select name="lead_id" id="editTeamLead">
-                        <?php foreach ($teamLeads as $tl): ?>
-                        <option value="<?php echo $tl['id']; ?>"><?php echo htmlspecialchars($tl['name']); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
             </div>
             <div class="modal-btns">
                 <button type="button" class="btn-cancel" onclick="closeModals()">Отмена</button>
@@ -498,11 +509,10 @@ $currentTime  = date('H:i');
         document.getElementById('editUserProject').value  = project;
         openModal('editUserModal');
     }
-    function openEditTeamModal(id, name, desc, leadId) {
+    function openEditTeamModal(id, name, desc) {
         document.getElementById('editTeamId').value   = id;
         document.getElementById('editTeamName').value = name;
         document.getElementById('editTeamDesc').value = desc;
-        document.getElementById('editTeamLead').value = leadId;
         openModal('editTeamModal');
     }
 </script>

@@ -1,36 +1,31 @@
 <?php
 require_once 'data.php';
 
-// Уже залогинен — редиректим
 if (isset($_SESSION['user_id'])) {
     $user = getCurrentUser();
-    if ($user['role'] === 'admin') header('Location: admin.php');
-    else header('Location: dashboard.php');
+    header($user['role'] === 'admin' ? 'Location: admin.php' : 'Location: dashboard.php');
     exit;
 }
 
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $login    = trim($_POST['login'] ?? '');
+    $login    = trim($_POST['login']    ?? '');
     $password = trim($_POST['password'] ?? '');
 
-    // TODO: заменить на SELECT * FROM users WHERE login=? AND password=hash(?)
-    $found = null;
-    foreach ($_SESSION['users'] as $u) {
-        if ($u['login'] === $login && $u['password'] === $password) {
-            $found = $u;
-            break;
-        }
-    }
+    $stmt = getDB()->prepare("
+        SELECT u.id, u.password_hash, r.name AS role
+        FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r       ON r.id = ur.role_id
+        WHERE u.login = ?
+    ");
+    $stmt->execute([$login]);
+    $found = $stmt->fetch();
 
-    if ($found) {
+    if ($found && password_verify($password, $found['password_hash'])) {
         $_SESSION['user_id'] = $found['id'];
-        if ($found['role'] === 'admin') {
-            header('Location: admin.php');
-        } else {
-            header('Location: dashboard.php');
-        }
+        header($found['role'] === 'admin' ? 'Location: admin.php' : 'Location: dashboard.php');
         exit;
     } else {
         $error = 'Неверный логин или пароль';
@@ -108,7 +103,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <form method="POST">
             <div class="form-group">
                 <label>Логин</label>
-                <input type="text" name="login" placeholder="Введите логин" value="<?php echo htmlspecialchars($_POST['login'] ?? ''); ?>" required autofocus>
+                <input type="text" name="login" placeholder="Введите логин"
+                       value="<?php echo htmlspecialchars($_POST['login'] ?? ''); ?>"
+                       required autofocus>
             </div>
             <div class="form-group">
                 <label>Пароль</label>

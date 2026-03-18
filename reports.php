@@ -4,51 +4,79 @@ requireRole('teamlead', 'employee');
 
 $user = getCurrentUser();
 
-// Обработка экспорта
 if (isset($_POST['export'])) {
     $dateFrom = $_POST['date_from'] ?? date('Y-m-01');
     $dateTo   = $_POST['date_to']   ?? date('Y-m-d');
+    $db       = getDB();
 
-    // TODO: SELECT * FROM time_logs WHERE date BETWEEN ? AND ? [AND user_id=?]
-    $logs = $_SESSION['time_logs'];
-
-    // Для сотрудника — только свои записи
+    // Тим лид видит всех, сотрудник — только себя
     if ($user['role'] === 'employee') {
-        $logs = array_filter($logs, fn($l) => $l['user_id'] === $user['id']);
+        $stmt = $db->prepare("
+            SELECT u.full_name, u.position, u.project,
+                   dr.report_date,
+                   wl_first.started_at AS shift_start,
+                   wl_last.ended_at    AS shift_end,
+                   dr.total_work_minutes,
+                   dr.overtime_minutes
+            FROM daily_reports dr
+            JOIN users u ON u.id = dr.user_id
+            LEFT JOIN LATERAL (
+                SELECT started_at FROM work_logs
+                WHERE user_id = dr.user_id AND DATE(started_at) = dr.report_date
+                  AND type = 'work' ORDER BY started_at ASC LIMIT 1
+            ) wl_first ON true
+            LEFT JOIN LATERAL (
+                SELECT ended_at FROM work_logs
+                WHERE user_id = dr.user_id AND DATE(started_at) = dr.report_date
+                  AND type = 'work' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 1
+            ) wl_last ON true
+            WHERE dr.user_id = ? AND dr.report_date BETWEEN ? AND ?
+            ORDER BY dr.report_date DESC
+        ");
+        $stmt->execute([$user['id'], $dateFrom, $dateTo]);
+    } else {
+        $stmt = $db->prepare("
+            SELECT u.full_name, u.position, u.project,
+                   dr.report_date,
+                   wl_first.started_at AS shift_start,
+                   wl_last.ended_at    AS shift_end,
+                   dr.total_work_minutes,
+                   dr.overtime_minutes
+            FROM daily_reports dr
+            JOIN users u ON u.id = dr.user_id
+            LEFT JOIN LATERAL (
+                SELECT started_at FROM work_logs
+                WHERE user_id = dr.user_id AND DATE(started_at) = dr.report_date
+                  AND type = 'work' ORDER BY started_at ASC LIMIT 1
+            ) wl_first ON true
+            LEFT JOIN LATERAL (
+                SELECT ended_at FROM work_logs
+                WHERE user_id = dr.user_id AND DATE(started_at) = dr.report_date
+                  AND type = 'work' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 1
+            ) wl_last ON true
+            WHERE dr.report_date BETWEEN ? AND ?
+            ORDER BY dr.report_date DESC, u.full_name
+        ");
+        $stmt->execute([$dateFrom, $dateTo]);
     }
 
-    // Обогатить именами
-    $rows = [];
-    foreach ($logs as $log) {
-        $empUser = null;
-        foreach ($_SESSION['users'] as $u) {
-            if ($u['id'] === $log['user_id']) { $empUser = $u; break; }
-        }
-        if (!$empUser) continue;
-        $rows[] = [
-            'name'        => $empUser['name'],
-            'position'    => $empUser['position'],
-            'project'     => $empUser['project'],
-            'date'        => $log['date'],
-            'start'       => $log['start'],
-            'end'         => $log['end'] ?? '—',
-            'total_today' => $log['total_today'],
-            'total_week'  => $log['total_week'],
-            'overtime'    => $log['overtime'],
-        ];
-    }
+    $rows = $stmt->fetchAll();
 
-    // Отдаём CSV (открывается Excel)
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="devtime_report_' . $dateFrom . '_' . $dateTo . '.csv"');
     $out = fopen('php://output', 'w');
-    // BOM для корректного отображения кириллицы в Excel
     fputs($out, "\xEF\xBB\xBF");
-    fputcsv($out, ['Сотрудник','Должность','Проект','Дата','Начало','Конец','Сегодня (ч)','За неделю (ч)','Переработка (ч)'], ';');
+    fputcsv($out, ['Сотрудник','Должность','Проект','Дата','Начало смены','Конец смены','Часов за день','Переработка (мин)'], ';');
     foreach ($rows as $r) {
         fputcsv($out, [
-            $r['name'], $r['position'], $r['project'], $r['date'],
-            $r['start'], $r['end'], $r['total_today'], $r['total_week'], $r['overtime']
+            $r['full_name'],
+            $r['position'],
+            $r['project'],
+            $r['report_date'],
+            $r['shift_start'] ? date('H:i', strtotime($r['shift_start'])) : '—',
+            $r['shift_end']   ? date('H:i', strtotime($r['shift_end']))   : '—',
+            round($r['total_work_minutes'] / 60, 2),
+            $r['overtime_minutes'],
         ], ';');
     }
     fclose($out);
@@ -94,7 +122,7 @@ $currentDayRu = $daysMap[date('l')];
         .form-group label { display: block; font-weight: 600; color: #374151; margin-bottom: 7px; font-size: 0.9rem; }
         .form-group input { width: 100%; padding: 12px 14px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
         .form-group input:focus { border-color: #3b82f6; }
-        .btn-export { width: 100%; padding: 16px; border: none; border-radius: 12px; background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        .btn-export { width: 100%; padding: 16px; border: none; border-radius: 12px; background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
         .btn-export:hover { opacity: 0.9; }
         .info-box { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 12px; padding: 20px; margin-top: 25px; }
         .info-box h4 { color: #0369a1; font-size: 1rem; margin-bottom: 8px; }
@@ -142,7 +170,7 @@ $currentDayRu = $daysMap[date('l')];
             <h2>📊 Экспорт отчёта</h2>
             <p class="desc">
                 <?php if ($user['role'] === 'teamlead'): ?>
-                    Выгрузка отчёта по всем закреплённым сотрудникам за выбранный период
+                    Выгрузка отчёта по всем сотрудникам за выбранный период
                 <?php else: ?>
                     Выгрузка персонального отчёта по рабочему времени за выбранный период
                 <?php endif; ?>
@@ -169,10 +197,10 @@ $currentDayRu = $daysMap[date('l')];
                 <ul>
                     <li>Сотрудник, должность, проект</li>
                     <li>Дата, начало и конец смены</li>
-                    <li>Часы за день, за неделю</li>
-                    <li>Переработка</li>
+                    <li>Часов за день (из daily_reports)</li>
+                    <li>Переработка в минутах</li>
                     <?php if ($user['role'] === 'teamlead'): ?>
-                    <li>Данные по всем закреплённым сотрудникам</li>
+                    <li>Данные по всем сотрудникам</li>
                     <?php else: ?>
                     <li>Только ваши личные записи</li>
                     <?php endif; ?>

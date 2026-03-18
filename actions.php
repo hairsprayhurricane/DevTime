@@ -11,47 +11,67 @@ if ($user['role'] === 'employee') {
     $empId = $user['id'];
 }
 
-// TODO: здесь будут INSERT/UPDATE запросы к БД вместо работы с сессией
 if ($empId > 0 && $action) {
-    $now = date('H:i');
+    $db = getDB();
 
     switch ($action) {
         case 'start':
-            $_SESSION['statuses'][$empId]       = 'working';
-            $_SESSION['session_starts'][$empId] = $now;
-            // TODO: INSERT INTO time_logs (user_id, date, start) VALUES (?, NOW(), ?)
+            // Закрываем все случайно незакрытые записи за сегодня (защита от дублей)
+            $db->prepare("
+                UPDATE work_logs SET ended_at = NOW()
+                WHERE user_id = ? AND ended_at IS NULL
+            ")->execute([$empId]);
+
+            // Открываем новый рабочий отрезок
+            $db->prepare("
+                INSERT INTO work_logs (user_id, started_at, type)
+                VALUES (?, NOW(), 'work')
+            ")->execute([$empId]);
             break;
 
         case 'stop':
-            $_SESSION['statuses'][$empId]       = 'offline';
-            $_SESSION['session_starts'][$empId] = '—';
-            // TODO: UPDATE time_logs SET end=NOW(), total_today=TIMEDIFF(NOW(), start) WHERE user_id=? AND date=TODAY()
-            // Пересчитать total_today заглушкой
-            foreach ($_SESSION['time_logs'] as &$log) {
-                if ($log['user_id'] === $empId) {
-                    $log['total_today'] = round($log['total_today'] + 0, 1); // реальный расчёт — из БД
-                    break;
-                }
-            }
-            unset($log);
+            // Закрываем текущий открытый отрезок (work или break)
+            $db->prepare("
+                UPDATE work_logs SET ended_at = NOW()
+                WHERE user_id = ? AND ended_at IS NULL
+            ")->execute([$empId]);
+
+            // Пересчитываем итоги дня и переработку
+            recalcDailyReport($empId);
             break;
 
         case 'break':
-            $_SESSION['statuses'][$empId] = 'resting';
-            // TODO: INSERT INTO breaks (user_id, start) VALUES (?, NOW())
+            // Закрываем рабочий отрезок
+            $db->prepare("
+                UPDATE work_logs SET ended_at = NOW()
+                WHERE user_id = ? AND ended_at IS NULL AND type = 'work'
+            ")->execute([$empId]);
+
+            // Открываем отрезок-перерыв
+            $db->prepare("
+                INSERT INTO work_logs (user_id, started_at, type)
+                VALUES (?, NOW(), 'break')
+            ")->execute([$empId]);
             break;
 
         case 'resume':
-            $_SESSION['statuses'][$empId] = 'working';
-            // TODO: UPDATE breaks SET end=NOW() WHERE user_id=? AND end IS NULL
+            // Закрываем перерыв
+            $db->prepare("
+                UPDATE work_logs SET ended_at = NOW()
+                WHERE user_id = ? AND ended_at IS NULL AND type = 'break'
+            ")->execute([$empId]);
+
+            // Открываем новый рабочий отрезок
+            $db->prepare("
+                INSERT INTO work_logs (user_id, started_at, type)
+                VALUES (?, NOW(), 'work')
+            ")->execute([$empId]);
             break;
     }
 }
 
-// Вернуться на страницу откуда пришли
 $redirect = $_POST['redirect'] ?? 'dashboard.php';
-// Безопасность: только внутренние страницы
-$allowed = ['dashboard.php', 'team.php'];
+$allowed  = ['dashboard.php', 'team.php'];
 if (!in_array($redirect, $allowed)) $redirect = 'dashboard.php';
 
 header("Location: {$redirect}?notify={$action}&emp=" . urlencode($_POST['employee_name'] ?? ''));
