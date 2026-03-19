@@ -24,29 +24,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $project  = trim($_POST['project']  ?? '');
 
         if ($login && $name && $password) {
-            $hash = password_hash($password, PASSWORD_BCRYPT);
+            // Проверка длины полей
+            if (mb_strlen($login) > 50 || mb_strlen($name) > 100 || mb_strlen($password) > 50
+                || mb_strlen($position) > 50 || mb_strlen($project) > 50) {
+                $msg = '❌ Логин, пароль, должность и проект не должны превышать 50 символов';
+            } else {
+                // Проверка уникальности логина
+                $check = $db->prepare("SELECT id FROM users WHERE login = ?");
+                $check->execute([$login]);
+                if ($check->fetch()) {
+                    $msg = '❌ Пользователь с логином «' . htmlspecialchars($login) . '» уже существует';
+                } else {
+                    // Проверка: в команде не может быть 2 тимлида
+                    $teamConflict = false;
+                    if ($teamId && $role === 'teamlead') {
+                        $leadCheck = $db->prepare("
+                            SELECT COUNT(*) FROM team_members tm
+                            JOIN user_roles ur ON ur.user_id = tm.user_id
+                            JOIN roles r ON r.id = ur.role_id
+                            WHERE tm.team_id = ? AND r.name = 'teamlead'
+                        ");
+                        $leadCheck->execute([$teamId]);
+                        if ((int)$leadCheck->fetchColumn() > 0) {
+                            $msg = '❌ В этой команде уже есть тим лид';
+                            $teamConflict = true;
+                        }
+                    }
 
-            $stmt = $db->prepare("
-                INSERT INTO users (full_name, position, project, login, password_hash)
-                VALUES (?, ?, ?, ?, ?) RETURNING id
-            ");
-            $stmt->execute([$name, $position, $project, $login, $hash]);
-            $newId = $stmt->fetchColumn();
+                    if (!$teamConflict) {
+                        $hash = password_hash($password, PASSWORD_BCRYPT);
+                        $stmt = $db->prepare("
+                            INSERT INTO users (full_name, position, project, login, password_hash)
+                            VALUES (?, ?, ?, ?, ?) RETURNING id
+                        ");
+                        $stmt->execute([$name, $position, $project, $login, $hash]);
+                        $newId = $stmt->fetchColumn();
 
-            // Назначаем роль
-            $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
-            $roleRow->execute([$role]);
-            $roleId = $roleRow->fetchColumn();
-            $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")
-               ->execute([$newId, $roleId]);
+                        $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
+                        $roleRow->execute([$role]);
+                        $roleId = $roleRow->fetchColumn();
+                        $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")
+                           ->execute([$newId, $roleId]);
 
-            // Добавляем в команду
-            if ($teamId) {
-                $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")
-                   ->execute([$newId, $teamId]);
+                        if ($teamId) {
+                            $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")
+                               ->execute([$newId, $teamId]);
+                        }
+
+                        $msg = '✅ Пользователь «' . htmlspecialchars($name) . '» создан';
+                    }
+                }
             }
-
-            $msg = '✅ Пользователь «' . htmlspecialchars($name) . '» создан';
         }
         $tab = 'users';
     }
@@ -58,41 +86,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $position = trim($_POST['position'] ?? '');
         $project  = trim($_POST['project']  ?? '');
 
-        // Логин и пароль можно менять только себе
-        if ($uid === $user['id']) {
-            $login = trim($_POST['login'] ?? '');
-            $db->prepare("UPDATE users SET full_name=?, login=?, position=?, project=? WHERE id=?")
-               ->execute([$name, $login, $position, $project, $uid]);
-            if (!empty($_POST['password'])) {
-                $db->prepare("UPDATE users SET password_hash=? WHERE id=?")
-                   ->execute([password_hash($_POST['password'], PASSWORD_BCRYPT), $uid]);
-            }
+        // Проверка длины
+        if (mb_strlen($name) > 100 || mb_strlen($position) > 50 || mb_strlen($project) > 50) {
+            $msg = '❌ Должность и проект не должны превышать 50 символов';
+            $tab = 'users';
         } else {
-            $db->prepare("UPDATE users SET full_name=?, position=?, project=? WHERE id=?")
-               ->execute([$name, $position, $project, $uid]);
-        }
-
-        // Роль нельзя менять у самого себя (защита от самопонижения)
-        if ($uid !== $user['id']) {
-            $role = $_POST['role'] ?? 'employee';
-            $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
-            $roleRow->execute([$role]);
-            $roleId = $roleRow->fetchColumn();
-            $db->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
-            $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")->execute([$uid, $roleId]);
-        }
-
-        // Команду тоже нельзя менять у себя
-        if ($uid !== $user['id']) {
-            $teamId = $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null;
-            $db->prepare("DELETE FROM team_members WHERE user_id = ?")->execute([$uid]);
-            if ($teamId) {
-                $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")->execute([$uid, $teamId]);
+            // Логин и пароль можно менять только себе
+            if ($uid === $user['id']) {
+                $login = trim($_POST['login'] ?? '');
+                if (mb_strlen($login) > 50) {
+                    $msg = '❌ Логин не должен превышать 50 символов';
+                    $tab = 'users';
+                } else {
+                    // Проверка уникальности логина (исключая себя)
+                    $check = $db->prepare("SELECT id FROM users WHERE login = ? AND id != ?");
+                    $check->execute([$login, $uid]);
+                    if ($check->fetch()) {
+                        $msg = '❌ Логин «' . htmlspecialchars($login) . '» уже занят';
+                        $tab = 'users';
+                    } else {
+                        $db->prepare("UPDATE users SET full_name=?, login=?, position=?, project=? WHERE id=?")
+                           ->execute([$name, $login, $position, $project, $uid]);
+                        if (!empty($_POST['password'])) {
+                            $pw = $_POST['password'];
+                            if (mb_strlen($pw) > 50) {
+                                $msg = '❌ Пароль не должен превышать 50 символов';
+                                $tab = 'users';
+                            } else {
+                                $db->prepare("UPDATE users SET password_hash=? WHERE id=?")
+                                   ->execute([password_hash($pw, PASSWORD_BCRYPT), $uid]);
+                                $msg = '✅ Пользователь обновлён';
+                            }
+                        } else {
+                            $msg = '✅ Пользователь обновлён';
+                        }
+                        $tab = 'users';
+                    }
+                }
+            } else {
+                $db->prepare("UPDATE users SET full_name=?, position=?, project=? WHERE id=?")
+                   ->execute([$name, $position, $project, $uid]);
+                $msg = '✅ Пользователь обновлён';
             }
-        }
 
-        $msg = '✅ Пользователь обновлён';
-        $tab = 'users';
+            // Роль нельзя менять у самого себя
+            if ($uid !== $user['id'] && empty($msg) || ($uid !== $user['id'] && str_starts_with($msg, '✅'))) {
+                $role = $_POST['role'] ?? 'employee';
+                $teamId = $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null;
+
+                // Проверка: в команде не может быть 2 тимлида
+                if ($teamId && $role === 'teamlead') {
+                    $leadCheck = $db->prepare("
+                        SELECT COUNT(*) FROM team_members tm
+                        JOIN user_roles ur ON ur.user_id = tm.user_id
+                        JOIN roles r ON r.id = ur.role_id
+                        WHERE tm.team_id = ? AND r.name = 'teamlead' AND tm.user_id != ?
+                    ");
+                    $leadCheck->execute([$teamId, $uid]);
+                    if ((int)$leadCheck->fetchColumn() > 0) {
+                        $msg = '❌ В этой команде уже есть тим лид';
+                        $tab = 'users';
+                    }
+                }
+
+                if (str_starts_with($msg, '✅')) {
+                    $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
+                    $roleRow->execute([$role]);
+                    $roleId = $roleRow->fetchColumn();
+                    $db->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
+                    $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")->execute([$uid, $roleId]);
+
+                    $db->prepare("DELETE FROM team_members WHERE user_id = ?")->execute([$uid]);
+                    if ($teamId) {
+                        $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")->execute([$uid, $teamId]);
+                    }
+                }
+            }
+
+            $tab = 'users';
+        }
     }
 
     // --- Удалить пользователя ---
@@ -189,7 +261,9 @@ require 'layout.php';
     <div class="container">
 
         <?php if ($msg): ?>
-            <div class="msg-box"><?php echo $msg; ?></div>
+            <div class="msg-box" style="<?php echo str_starts_with($msg, '❌') ? 'background:#fef2f2;border-color:#fca5a5;color:#dc2626;' : ''; ?>">
+                <?php echo $msg; ?>
+            </div>
         <?php endif; ?>
 
         <div class="tabs">
