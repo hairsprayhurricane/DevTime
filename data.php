@@ -96,7 +96,7 @@ function getSessionStart(int $userId): string {
 // Сотрудники
 // ============================================================
 
-function getEmployees(): array {
+function getEmployees(string $filterDate = '', string $filterWeek = 'current'): array {
     $stmt = getDB()->query("
         SELECT u.id, u.full_name AS name, u.position, u.project, r.name AS role
         FROM users u
@@ -110,30 +110,40 @@ function getEmployees(): array {
     foreach ($employees as &$emp) {
         $emp['status']          = getUserStatus($emp['id']);
         $emp['current_session'] = getSessionStart($emp['id']);
-        $daily                  = getDailyReport($emp['id']);
+        $daily                  = getDailyReport($emp['id'], $filterDate);
         $emp['total_today']     = $daily ? round($daily['total_work_minutes'] / 60, 1) : 0;
-        $emp['total_week']      = getWeeklyHours($emp['id']);
+        $emp['total_week']      = getWeeklyHours($emp['id'], $filterWeek);
         $emp['overtime']        = $daily ? round($daily['overtime_minutes'] / 60, 1) : 0;
     }
     unset($emp);
     return $employees;
 }
 
-function getDailyReport(int $userId): ?array {
+function getDailyReport(int $userId, string $date = ''): ?array {
+    $d = $date ?: date('Y-m-d');
     $stmt = getDB()->prepare("
         SELECT * FROM daily_reports
-        WHERE user_id = ? AND report_date = CURRENT_DATE
+        WHERE user_id = ? AND report_date = ?
     ");
-    $stmt->execute([$userId]);
+    $stmt->execute([$userId, $d]);
     return $stmt->fetch() ?: null;
 }
 
-function getWeeklyHours(int $userId): float {
+function getWeeklyHours(int $userId, string $week = 'current'): float {
+    if ($week === 'prev') {
+        $from = "DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '7 days'";
+        $to   = "DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 day'";
+    } elseif ($week === 'month') {
+        $from = "DATE_TRUNC('month', CURRENT_DATE)";
+        $to   = "CURRENT_DATE";
+    } else {
+        $from = "DATE_TRUNC('week', CURRENT_DATE)";
+        $to   = "CURRENT_DATE";
+    }
     $stmt = getDB()->prepare("
         SELECT COALESCE(SUM(total_work_minutes), 0) AS mins
         FROM daily_reports
-        WHERE user_id = ?
-          AND report_date >= DATE_TRUNC('week', CURRENT_DATE)
+        WHERE user_id = ? AND report_date BETWEEN $from AND $to
     ");
     $stmt->execute([$userId]);
     return round($stmt->fetchColumn() / 60, 1);

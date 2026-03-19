@@ -3,7 +3,11 @@ require_once 'data.php';
 requireRole('teamlead', 'employee');
 
 $user      = getCurrentUser();
-$allEmps   = getEmployees();
+
+$filterDate = $_GET['date'] ?? date('Y-m-d');
+$filterWeek = $_GET['week'] ?? 'current';
+
+$allEmps   = getEmployees($filterDate, $filterWeek);
 
 $visibleEmps = ($user['role'] === 'employee')
     ? array_filter($allEmps, fn($e) => $e['id'] === $user['id'])
@@ -101,14 +105,15 @@ require 'layout.php';
     <div class="container">
         <div class="section-header">
             <h2>📊 Учет рабочего времени</h2>
-            <div class="date-picker">
-                <select>
-                    <option>Текущая неделя</option>
-                    <option>Прошлая неделя</option>
-                    <option>Текущий месяц</option>
+            <form method="GET" action="dashboard.php" class="date-picker">
+                <select name="week" onchange="this.form.submit()">
+                    <option value="current" <?php echo $filterWeek === 'current' ? 'selected' : ''; ?>>Текущая неделя</option>
+                    <option value="prev"    <?php echo $filterWeek === 'prev'    ? 'selected' : ''; ?>>Прошлая неделя</option>
+                    <option value="month"   <?php echo $filterWeek === 'month'   ? 'selected' : ''; ?>>Текущий месяц</option>
                 </select>
-                <input type="date" value="<?php echo date('Y-m-d'); ?>">
-            </div>
+                <input type="date" name="date" value="<?php echo htmlspecialchars($filterDate); ?>"
+                       onchange="this.form.submit()">
+            </form>
         </div>
 
         <div class="table-container">
@@ -120,10 +125,10 @@ require 'layout.php';
                         <th>Проект</th>
                         <th>Статус</th>
                         <th>Начало смены</th>
-                        <th>Сегодня</th>
-                        <th>За неделю</th>
+                        <th><?php echo $filterDate === date('Y-m-d') ? 'Сегодня' : date('d.m', strtotime($filterDate)); ?></th>
+                        <th>За период</th>
                         <th>Переработка</th>
-                        <th>Прогресс (40ч)</th>                    </tr>
+                        <th>Прогресс (40ч)</th>
                 </thead>
                 <tbody>
                     <?php foreach ($tableLogs as $emp):
