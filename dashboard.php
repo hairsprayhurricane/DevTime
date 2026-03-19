@@ -233,16 +233,8 @@ require 'layout.php';
 </footer>
 
 <script>
-    // Живые часы
-    function updateClock() {
-        const now = new Date();
-        document.getElementById('live-time').textContent =
-            String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-    }
-    setInterval(updateClock, 60000);
-
-    // Авто-обновление страницы каждые 30 сек для синхронизации статусов
-    setTimeout(() => location.reload(), 30000);
+    // Авто-обновление страницы каждые 10 сек для синхронизации статусов
+    setTimeout(() => location.reload(), 10000);
 </script>
 </body>
 </html>

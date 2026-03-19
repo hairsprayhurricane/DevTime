@@ -158,21 +158,26 @@ echo "✅ OK\n\n";
 // ============================================================
 echo "👤 Создаём пользователей...\n";
 
+// [full_name, position, project, login, password, role_id]
 $users = [
-    ['Администратор',   'Administrator',      '—',              'admin',    'admin123', 1],
-    ['Алексей Иванов',  'Team Lead',          'Mobile App',     'teamlead', 'lead123',  2],
-    ['Мария Петрова',   'Frontend Developer', 'Web Dashboard',  'maria',    'pass123',  3],
-    ['Дмитрий Сидоров', 'Backend Developer',  'API Gateway',    'dmitry',   'pass123',  3],
-    ['Елена Козлова',   'QA Engineer',        'Testing',        'elena',    'pass123',  3],
-    ['Павел Новиков',   'DevOps',             'Infrastructure', 'pavel',    'pass123',  3],
+    ['Администратор',   'Administrator',      '—',              'admin',      'admin123', 1],
+    ['Алексей Иванов',  'Team Lead',          'Mobile App',     'teamlead1',  'lead123',  2],
+    ['Сергей Морозов',  'Team Lead',          'API Gateway',    'teamlead2',  'lead123',  2],
+    ['Мария Петрова',   'Frontend Developer', 'Web Dashboard',  'maria',      'pass123',  3],
+    ['Дмитрий Сидоров', 'Backend Developer',  'API Gateway',    'dmitry',     'pass123',  3],
+    ['Елена Козлова',   'QA Engineer',        'Testing',        'elena',      'pass123',  3],
+    ['Павел Новиков',   'DevOps',             'Infrastructure', 'pavel',      'pass123',  3],
 ];
 
+// login => [team_id, ...]
+// Frontend Squad = 1, Backend Guild = 2
 $teamMap = [
-    'teamlead' => [1, 2],
-    'maria'    => [1],
-    'dmitry'   => [1],
-    'elena'    => [2],
-    'pavel'    => [2],
+    'teamlead1' => [1],
+    'teamlead2' => [2],
+    'maria'     => [1],
+    'dmitry'    => [1],
+    'elena'     => [2],
+    'pavel'     => [2],
 ];
 
 foreach ($users as [$fullName, $position, $project, $login, $password, $roleId]) {

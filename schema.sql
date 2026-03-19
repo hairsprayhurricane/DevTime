@@ -84,34 +84,37 @@ INSERT INTO teams (name, description) VALUES
     ('Backend Guild',  'Бэкенд, DevOps и тестирование');
 
 -- ============================================================
--- Пользователи (пароли: admin=admin123, teamlead=lead123, остальные=pass123)
+-- Пользователи
+-- Пароли: admin=admin123, teamlead1=lead123, teamlead2=lead123, остальные=pass123
 -- ============================================================
 INSERT INTO users (full_name, position, project, login, password_hash) VALUES
-    ('Администратор',   'Administrator',      '—',              'admin',    '$2b$10$LFHFmInz7..chsMq7qyqqevNLtR9s/ZfxOI033ndDz3UlWfQiUUxy'),
-    ('Алексей Иванов',  'Team Lead',          'Mobile App',     'teamlead', '$2b$10$MVm/Sfcatx/xmh79jFUZkO1o3PS2ZcF2afLQSJru/8JFadgl27ghK'),
-    ('Мария Петрова',   'Frontend Developer', 'Web Dashboard',  'maria',    '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K'),
-    ('Дмитрий Сидоров', 'Backend Developer',  'API Gateway',    'dmitry',   '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K'),
-    ('Елена Козлова',   'QA Engineer',        'Testing',        'elena',    '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K'),
-    ('Павел Новиков',   'DevOps',             'Infrastructure', 'pavel',    '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K');
+    ('Администратор',   'Administrator',      '—',              'admin',      '$2b$10$LFHFmInz7..chsMq7qyqqevNLtR9s/ZfxOI033ndDz3UlWfQiUUxy'),
+    ('Алексей Иванов',  'Team Lead',          'Mobile App',     'teamlead1',  '$2b$10$MVm/Sfcatx/xmh79jFUZkO1o3PS2ZcF2afLQSJru/8JFadgl27ghK'),
+    ('Сергей Морозов',  'Team Lead',          'API Gateway',    'teamlead2',  '$2b$10$MVm/Sfcatx/xmh79jFUZkO1o3PS2ZcF2afLQSJru/8JFadgl27ghK'),
+    ('Мария Петрова',   'Frontend Developer', 'Web Dashboard',  'maria',      '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K'),
+    ('Дмитрий Сидоров', 'Backend Developer',  'API Gateway',    'dmitry',     '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K'),
+    ('Елена Козлова',   'QA Engineer',        'Testing',        'elena',      '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K'),
+    ('Павел Новиков',   'DevOps',             'Infrastructure', 'pavel',      '$2b$10$T0ZwLGW/UPDjxxyhvcN7vu/0Wuu8R90vHrNn3Mc90lrgLQe7YHG0K');
 
 -- ============================================================
 -- Роли пользователей
 -- ============================================================
 INSERT INTO user_roles (user_id, role_id) VALUES
-    (1, 1), -- admin    → admin
-    (2, 2), -- teamlead → teamlead
-    (3, 3), -- maria    → employee
-    (4, 3), -- dmitry   → employee
-    (5, 3), -- elena    → employee
-    (6, 3); -- pavel    → employee
+    (1, 1), -- admin      → admin
+    (2, 2), -- teamlead1  → teamlead
+    (3, 2), -- teamlead2  → teamlead
+    (4, 3), -- maria      → employee
+    (5, 3), -- dmitry     → employee
+    (6, 3), -- elena      → employee
+    (7, 3); -- pavel      → employee
 
 -- ============================================================
 -- Участники команд
 -- ============================================================
 INSERT INTO team_members (user_id, team_id) VALUES
-    (2, 1), -- teamlead → Frontend Squad
-    (3, 1), -- maria    → Frontend Squad
-    (4, 1), -- dmitry   → Frontend Squad
-    (2, 2), -- teamlead → Backend Guild
-    (5, 2), -- elena    → Backend Guild
-    (6, 2); -- pavel    → Backend Guild
+    (2, 1), -- teamlead1 → Frontend Squad
+    (4, 1), -- maria     → Frontend Squad
+    (5, 1), -- dmitry    → Frontend Squad
+    (3, 2), -- teamlead2 → Backend Guild
+    (6, 2), -- elena     → Backend Guild
+    (7, 2); -- pavel     → Backend Guild

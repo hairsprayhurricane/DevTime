@@ -162,7 +162,7 @@ php -S localhost:8000
 | Логин | Пароль | Роль | Команда |
 |---|---|---|---|
 | `admin` | `admin123` | Администратор | — |
-| `teamlead` | `lead123` | Тим Лид | Frontend Squad, Backend Guild |
+| `teamlead1 ИЛИ teamlead2` | `lead123` | Тим Лид | Frontend Squad, Backend Guild |
 | `maria` | `pass123` | Сотрудник | Frontend Squad |
 | `dmitry` | `pass123` | Сотрудник | Frontend Squad |
 | `elena` | `pass123` | Сотрудник | Backend Guild |

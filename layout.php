@@ -18,7 +18,6 @@ $logoGradient = $headerTheme === 'admin'
     : 'linear-gradient(135deg, #60a5fa, #a78bfa)';
 
 $currentDate  = date('d.m.Y');
-$currentTime  = date('H:i');
 $daysMap = ['Monday'=>'Понедельник','Tuesday'=>'Вторник','Wednesday'=>'Среда',
             'Thursday'=>'Четверг','Friday'=>'Пятница','Saturday'=>'Суббота','Sunday'=>'Воскресенье'];
 $currentDayRu = $daysMap[date('l')];
@@ -75,10 +74,31 @@ $currentDayRu = $daysMap[date('l')];
         </div>
         <div class="week-info" <?php echo $headerTheme === 'admin' ? 'style="background:#fef3c7;color:#92400e;"' : ''; ?>>
             <?php if ($headerTheme === 'admin'): ?>
-                🛡️ Режим администратора | <?php echo $currentTime; ?>
+                🛡️ Режим администратора | <span id="live-time"></span>
             <?php else: ?>
-                ⏱️ Текущее время: <span id="live-time"><?php echo $currentTime; ?></span> | Неделя <?php echo date('W'); ?>
+                ⏱️ Текущее время: <span id="live-time"></span> | Неделя <?php echo date('W'); ?>
             <?php endif; ?>
         </div>
     </div>
 </div>
+
+<script>
+    function getMoscowTime() {
+        const now = new Date();
+        // Московское время UTC+3
+        const moscow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
+        const h = String(moscow.getHours()).padStart(2, '0');
+        const m = String(moscow.getMinutes()).padStart(2, '0');
+        return h + ':' + m;
+    }
+
+    function updateClock() {
+        const el = document.getElementById('live-time');
+        if (el) el.textContent = getMoscowTime();
+    }
+
+    // Сразу показываем время без задержки
+    updateClock();
+    // Обновляем каждую минуту
+    setInterval(updateClock, 60000);
+</script>

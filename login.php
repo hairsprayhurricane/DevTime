@@ -117,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="hint">
             <strong>Тестовые аккаунты:</strong>
             <div>👤 <strong>admin</strong> / admin123 — Администратор</div>
-            <div>👤 <strong>teamlead</strong> / lead123 — Тим Лид</div>
+            <div>👤 <strong>teamlead1 ИЛИ teamlead2</strong> / lead123 — Тим Лид</div>
             <div>👤 <strong>maria</strong> / pass123 — Сотрудник</div>
             <div>👤 <strong>elena</strong> / pass123 — Сотрудник (другая команда)</div>
         </div>
