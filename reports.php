@@ -62,6 +62,9 @@ if (isset($_POST['export'])) {
 
     $rows = $stmt->fetchAll();
 
+    // Сбрасываем любой буферизованный вывод перед отправкой CSV
+    while (ob_get_level()) ob_end_clean();
+
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="devtime_report_' . $dateFrom . '_' . $dateTo . '.csv"');
     $out = fopen('php://output', 'w');
@@ -72,10 +75,10 @@ if (isset($_POST['export'])) {
             $r['full_name'],
             $r['position'],
             $r['project'],
-            $r['report_date'],
+            $r['report_date'] ? date('d.m.Y', strtotime($r['report_date'])) : '—',
             $r['shift_start'] ? date('H:i', strtotime($r['shift_start'])) : '—',
             $r['shift_end']   ? date('H:i', strtotime($r['shift_end']))   : '—',
-            round($r['total_work_minutes'] / 60, 2),
+            number_format($r['total_work_minutes'] / 60, 1, '.', ''),
             $r['overtime_minutes'],
         ], ';');
     }
