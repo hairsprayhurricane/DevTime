@@ -96,15 +96,32 @@ function getSessionStart(int $userId): string {
 // Сотрудники
 // ============================================================
 
-function getEmployees(string $filterDate = '', string $filterWeek = 'current'): array {
-    $stmt = getDB()->query("
-        SELECT u.id, u.full_name AS name, u.position, u.project, r.name AS role
-        FROM users u
-        JOIN user_roles ur ON ur.user_id = u.id
-        JOIN roles r       ON r.id = ur.role_id
-        WHERE r.name IN ('employee', 'teamlead')
-        ORDER BY u.id
-    ");
+function getEmployees(string $filterDate = '', string $filterWeek = 'current', ?int $leadId = null): array {
+    if ($leadId !== null) {
+        // Тимлид видит только участников своих команд
+        $stmt = getDB()->prepare("
+            SELECT DISTINCT u.id, u.full_name AS name, u.position, u.project, r.name AS role
+            FROM users u
+            JOIN user_roles ur ON ur.user_id = u.id
+            JOIN roles r       ON r.id = ur.role_id
+            JOIN team_members tm ON tm.user_id = u.id
+            WHERE r.name IN ('employee', 'teamlead')
+              AND tm.team_id IN (
+                  SELECT team_id FROM team_members WHERE user_id = ?
+              )
+            ORDER BY u.id
+        ");
+        $stmt->execute([$leadId]);
+    } else {
+        $stmt = getDB()->query("
+            SELECT u.id, u.full_name AS name, u.position, u.project, r.name AS role
+            FROM users u
+            JOIN user_roles ur ON ur.user_id = u.id
+            JOIN roles r       ON r.id = ur.role_id
+            WHERE r.name IN ('employee', 'teamlead')
+            ORDER BY u.id
+        ");
+    }
     $employees = $stmt->fetchAll();
 
     foreach ($employees as &$emp) {

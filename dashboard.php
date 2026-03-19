@@ -7,7 +7,8 @@ $user      = getCurrentUser();
 $filterDate = $_GET['date'] ?? date('Y-m-d');
 $filterWeek = $_GET['week'] ?? 'current';
 
-$allEmps   = getEmployees($filterDate, $filterWeek);
+$leadId  = $user['role'] === 'teamlead' ? $user['id'] : null;
+$allEmps = getEmployees($filterDate, $filterWeek, $leadId);
 
 $visibleEmps = ($user['role'] === 'employee')
     ? array_filter($allEmps, fn($e) => $e['id'] === $user['id'])
