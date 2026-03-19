@@ -11,15 +11,15 @@ CREATE TABLE roles (
 
 CREATE TABLE teams (
     id          SERIAL PRIMARY KEY,
-    name        VARCHAR(100) NOT NULL,
+    name        VARCHAR(50) NOT NULL,
     description TEXT
 );
 
 CREATE TABLE users (
     id            SERIAL PRIMARY KEY,
-    full_name     VARCHAR(100) NOT NULL,
-    position      VARCHAR(100),
-    project       VARCHAR(100),
+    full_name     VARCHAR(50) NOT NULL,
+    position      VARCHAR(50),
+    project       VARCHAR(50),
     login         VARCHAR(50)  NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL
 );
