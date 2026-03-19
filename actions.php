@@ -74,6 +74,23 @@ $redirect = $_POST['redirect'] ?? 'dashboard.php';
 $allowed  = ['dashboard.php', 'team.php'];
 if (!in_array($redirect, $allowed)) $redirect = 'dashboard.php';
 
+// Обработка подтверждения/отклонения переработки (только тимлид)
+if (in_array($action, ['approve_overtime', 'reject_overtime']) && $user['role'] === 'teamlead') {
+    $requestId = (int)($_POST['request_id'] ?? 0);
+    if ($requestId > 0) {
+        $status = $action === 'approve_overtime' ? 'approved' : 'rejected';
+        getDB()->prepare("
+            UPDATE overtime_requests
+            SET status = ?, reviewed_by = ?, reviewed_at = NOW()
+            WHERE id = ?
+        ")->execute([$status, $user['id'], $requestId]);
+    }
+    header("Location: {$redirect}");
+    exit;
+}
+
 $empName = htmlspecialchars(strip_tags($_POST['employee_name'] ?? ''), ENT_QUOTES);
-header("Location: {$redirect}?notify=" . urlencode($action) . "&emp=" . urlencode($empName));
+$_SESSION['notify']     = $action;
+$_SESSION['notify_emp'] = $empName;
+header("Location: {$redirect}");
 exit;

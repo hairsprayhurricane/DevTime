@@ -85,7 +85,7 @@ function getSessionStart(int $userId): string {
         SELECT started_at FROM work_logs
         WHERE user_id = ? AND type = 'work'
           AND DATE(started_at) = CURRENT_DATE
-        ORDER BY started_at ASC LIMIT 1
+        ORDER BY started_at DESC LIMIT 1
     ");
     $stmt->execute([$userId]);
     $row = $stmt->fetch();
@@ -251,6 +251,17 @@ function recalcDailyReport(int $userId): void {
 // ============================================================
 // Утилиты
 // ============================================================
+
+function getOvertimeRequest(int $userId): ?array {
+    $stmt = getDB()->prepare("
+        SELECT id, overtime_minutes, status
+        FROM overtime_requests
+        WHERE user_id = ? AND report_date = CURRENT_DATE
+        ORDER BY created_at DESC LIMIT 1
+    ");
+    $stmt->execute([$userId]);
+    return $stmt->fetch() ?: null;
+}
 
 function statusLabel(string $status): array {
     return match($status) {

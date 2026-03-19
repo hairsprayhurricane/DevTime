@@ -55,32 +55,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'edit_user') {
         $uid      = (int)$_POST['user_id'];
         $name     = trim($_POST['name']     ?? '');
-        $login    = trim($_POST['login']    ?? '');
-        $role     = $_POST['role']    ?? 'employee';
-        $teamId   = $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null;
         $position = trim($_POST['position'] ?? '');
         $project  = trim($_POST['project']  ?? '');
 
-        $db->prepare("
-            UPDATE users SET full_name=?, login=?, position=?, project=? WHERE id=?
-        ")->execute([$name, $login, $position, $project, $uid]);
-
-        if (!empty($_POST['password'])) {
-            $db->prepare("UPDATE users SET password_hash=? WHERE id=?")
-               ->execute([password_hash($_POST['password'], PASSWORD_BCRYPT), $uid]);
+        // Логин и пароль можно менять только себе
+        if ($uid === $user['id']) {
+            $login = trim($_POST['login'] ?? '');
+            $db->prepare("UPDATE users SET full_name=?, login=?, position=?, project=? WHERE id=?")
+               ->execute([$name, $login, $position, $project, $uid]);
+            if (!empty($_POST['password'])) {
+                $db->prepare("UPDATE users SET password_hash=? WHERE id=?")
+                   ->execute([password_hash($_POST['password'], PASSWORD_BCRYPT), $uid]);
+            }
+        } else {
+            $db->prepare("UPDATE users SET full_name=?, position=?, project=? WHERE id=?")
+               ->execute([$name, $position, $project, $uid]);
         }
 
-        // Обновляем роль
-        $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
-        $roleRow->execute([$role]);
-        $roleId = $roleRow->fetchColumn();
-        $db->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
-        $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")->execute([$uid, $roleId]);
+        // Роль нельзя менять у самого себя (защита от самопонижения)
+        if ($uid !== $user['id']) {
+            $role = $_POST['role'] ?? 'employee';
+            $roleRow = $db->prepare("SELECT id FROM roles WHERE name = ?");
+            $roleRow->execute([$role]);
+            $roleId = $roleRow->fetchColumn();
+            $db->prepare("DELETE FROM user_roles WHERE user_id = ?")->execute([$uid]);
+            $db->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)")->execute([$uid, $roleId]);
+        }
 
-        // Обновляем команду
-        $db->prepare("DELETE FROM team_members WHERE user_id = ?")->execute([$uid]);
-        if ($teamId) {
-            $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")->execute([$uid, $teamId]);
+        // Команду тоже нельзя менять у себя
+        if ($uid !== $user['id']) {
+            $teamId = $_POST['team_id'] !== '' ? (int)$_POST['team_id'] : null;
+            $db->prepare("DELETE FROM team_members WHERE user_id = ?")->execute([$uid]);
+            if ($teamId) {
+                $db->prepare("INSERT INTO team_members (user_id, team_id) VALUES (?, ?)")->execute([$uid, $teamId]);
+            }
         }
 
         $msg = '✅ Пользователь обновлён';
@@ -142,103 +150,40 @@ $allUsers  = getAllUsers();
 $allTeams  = getAllTeams();
 $teamLeads = array_filter($allUsers, fn($u) => $u['role'] === 'teamlead');
 
-$currentDate = date('d.m.Y');
-$currentTime = date('H:i');
+$pageTitle   = 'Администрирование';
+$activeNav   = 'admin';
+$headerTheme = 'admin';
+$extraCss    = '
+    .page-content { padding: 40px 0; }
+    .tabs { display: inline-flex; gap: 5px; margin-bottom: 30px; background: #fff; padding: 6px; border-radius: 14px; border: 1px solid #e2e8f0; }
+    .tab-btn { padding: 10px 24px; border: none; border-radius: 10px; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s; background: transparent; color: #64748b; }
+    .tab-btn.active { background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; }
+    .tab-btn:hover:not(.active) { background: #f1f5f9; }
+    .btn-new { padding: 12px 24px; background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; border: none; border-radius: 12px; font-weight: 600; cursor: pointer; }
+    .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+    .admin-card { background: #fff; border-radius: 18px; padding: 25px; box-shadow: 0 6px 20px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+    .card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+    .card-avatar { width: 55px; height: 55px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+    .card-avatar.admin    { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+    .card-avatar.teamlead { background: linear-gradient(135deg, #8b5cf6, #3b82f6); }
+    .card-avatar.employee { background: linear-gradient(135deg, #3b82f6, #06b6d4); }
+    .card-avatar.team     { background: linear-gradient(135deg, #10b981, #059669); }
+    .card-info h3 { font-size: 1.1rem; margin-bottom: 4px; }
+    .card-info p  { font-size: 0.85rem; color: #64748b; }
+    .card-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .card-fields { display: flex; flex-direction: column; gap: 8px; }
+    .field-row { display: flex; justify-content: space-between; font-size: 0.88rem; padding: 8px 12px; background: #f8fafc; border-radius: 8px; }
+    .field-row .label { color: #64748b; }
+    .field-row .value { font-weight: 600; color: #1e293b; }
+    .role-chip { padding: 3px 10px; border-radius: 50px; font-size: 0.78rem; font-weight: 600; }
+    .role-admin    { background: #fef3c7; color: #92400e; }
+    .role-teamlead { background: #ede9fe; color: #5b21b6; }
+    .role-employee { background: #e0f2fe; color: #0369a1; }
+    .btn-save { background: linear-gradient(135deg, #f59e0b, #ef4444) !important; }
+    .form-group input:focus, .form-group select:focus { border-color: #f59e0b !important; }
+';
+require 'layout.php';
 ?>
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IT-Стартап | Администрирование</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1e293b; background-color: #f8fafc; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
-        header { background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff; padding: 20px 0; box-shadow: 0 4px 20px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
-        header .container { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
-        .logo h1 { font-size: 1.8rem; background: linear-gradient(135deg, #f59e0b, #ef4444); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-        .logo p { font-size: 0.9rem; color: #94a3b8; }
-        .user-info { display: flex; align-items: center; gap: 15px; background-color: rgba(255,255,255,0.1); padding: 10px 20px; border-radius: 50px; }
-        .user-avatar { width: 40px; height: 40px; background: linear-gradient(135deg, #f59e0b, #ef4444); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; }
-        .logout-btn { color: #94a3b8; text-decoration: none; font-size: 0.85rem; }
-        .logout-btn:hover { color: #fff; }
-        .date-bar { background-color: #fff; padding: 15px 0; border-bottom: 1px solid #e2e8f0; }
-        .date-bar .container { display: flex; justify-content: space-between; align-items: center; }
-        .current-date { display: flex; align-items: center; gap: 10px; color: #64748b; }
-        .current-date strong { color: #1e293b; font-size: 1.2rem; }
-        .week-info { background-color: #fef3c7; padding: 8px 15px; border-radius: 50px; font-size: 0.9rem; color: #92400e; }
-        .page-content { padding: 40px 0; }
-        .tabs { display: inline-flex; gap: 5px; margin-bottom: 30px; background: #fff; padding: 6px; border-radius: 14px; border: 1px solid #e2e8f0; }
-        .tab-btn { padding: 10px 24px; border: none; border-radius: 10px; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s; background: transparent; color: #64748b; }
-        .tab-btn.active { background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; }
-        .tab-btn:hover:not(.active) { background: #f1f5f9; }
-        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-        .section-header h2 { font-size: 1.6rem; color: #0f172a; }
-        .btn-new { padding: 12px 24px; background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; border: none; border-radius: 12px; font-weight: 600; cursor: pointer; }
-        .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
-        .admin-card { background: #fff; border-radius: 18px; padding: 25px; box-shadow: 0 6px 20px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
-        .card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
-        .card-avatar { width: 55px; height: 55px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; font-weight: 700; color: #fff; flex-shrink: 0; }
-        .card-avatar.admin    { background: linear-gradient(135deg, #f59e0b, #ef4444); }
-        .card-avatar.teamlead { background: linear-gradient(135deg, #8b5cf6, #3b82f6); }
-        .card-avatar.employee { background: linear-gradient(135deg, #3b82f6, #06b6d4); }
-        .card-avatar.team     { background: linear-gradient(135deg, #10b981, #059669); }
-        .card-info h3 { font-size: 1.1rem; margin-bottom: 4px; }
-        .card-info p  { font-size: 0.85rem; color: #64748b; }
-        .card-actions { display: flex; gap: 8px; flex-shrink: 0; }
-        .btn-sm { padding: 7px 14px; border: none; border-radius: 8px; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-        .btn-edit { background: #e0f2fe; color: #0369a1; }
-        .btn-edit:hover { background: #bae6fd; }
-        .btn-del  { background: #fee2e2; color: #dc2626; }
-        .btn-del:hover { background: #fecaca; }
-        .card-fields { display: flex; flex-direction: column; gap: 8px; }
-        .field-row { display: flex; justify-content: space-between; font-size: 0.88rem; padding: 8px 12px; background: #f8fafc; border-radius: 8px; }
-        .field-row .label { color: #64748b; }
-        .field-row .value { font-weight: 600; color: #1e293b; }
-        .role-chip { padding: 3px 10px; border-radius: 50px; font-size: 0.78rem; font-weight: 600; }
-        .role-admin    { background: #fef3c7; color: #92400e; }
-        .role-teamlead { background: #ede9fe; color: #5b21b6; }
-        .role-employee { background: #e0f2fe; color: #0369a1; }
-        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 500; align-items: center; justify-content: center; }
-        .modal-overlay.open { display: flex; }
-        .modal { background: #fff; border-radius: 20px; padding: 35px; width: 100%; max-width: 520px; box-shadow: 0 30px 60px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; }
-        .modal h3 { font-size: 1.3rem; margin-bottom: 22px; }
-        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .form-group { margin-bottom: 0; }
-        .form-group.full { grid-column: 1 / -1; }
-        .form-group label { display: block; font-weight: 600; color: #374151; margin-bottom: 6px; font-size: 0.88rem; }
-        .form-group input, .form-group select { width: 100%; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 0.92rem; outline: none; transition: border-color 0.2s; }
-        .form-group input:focus, .form-group select:focus { border-color: #f59e0b; }
-        .modal-btns { display: flex; gap: 12px; justify-content: flex-end; margin-top: 22px; }
-        .btn-cancel { padding: 10px 20px; background: #f1f5f9; color: #475569; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; }
-        .btn-save   { padding: 10px 20px; background: linear-gradient(135deg, #f59e0b, #ef4444); color: #fff; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; }
-        .msg-box { background: #f0fdf4; border: 1px solid #86efac; color: #16a34a; padding: 14px 20px; border-radius: 12px; margin-bottom: 25px; font-weight: 500; }
-        footer { background-color: #0f172a; color: #94a3b8; padding: 30px 0; text-align: center; margin-top: 60px; }
-    </style>
-</head>
-<body>
-
-<header>
-    <div class="container">
-        <div class="logo">
-            <h1>🛡️ DevTime Admin</h1>
-            <p>Панель администратора</p>
-        </div>
-        <div class="user-info">
-            <span><?php echo htmlspecialchars($user['name']); ?></span>
-            <div class="user-avatar">АД</div>
-            <a href="logout.php" class="logout-btn">Выйти</a>
-        </div>
-    </div>
-</header>
-
-<div class="date-bar">
-    <div class="container">
-        <div class="current-date"><span>📅</span><strong><?php echo $currentDate; ?></strong></div>
-        <div class="week-info">🛡️ Режим администратора | <?php echo $currentTime; ?></div>
-    </div>
-</div>
 
 <section class="page-content">
     <div class="container">
@@ -421,18 +366,20 @@ $currentTime = date('H:i');
             <input type="hidden" name="user_id"    id="editUserId">
             <div class="form-grid">
                 <div class="form-group full"><label>ФИО</label><input type="text" name="name" id="editUserName" required></div>
-                <div class="form-group"><label>Логин</label><input type="text" name="login" id="editUserLogin" required></div>
-                <div class="form-group"><label>Новый пароль (необяз.)</label><input type="password" name="password"></div>
+                <!-- Логин и пароль — только для своей карточки -->
+                <div class="form-group" id="editLoginGroup"><label>Логин</label><input type="text" name="login" id="editUserLogin"></div>
+                <div class="form-group" id="editPasswordGroup"><label>Новый пароль (необяз.)</label><input type="password" name="password"></div>
                 <div class="form-group"><label>Должность</label><input type="text" name="position" id="editUserPosition"></div>
                 <div class="form-group"><label>Проект</label><input type="text" name="project" id="editUserProject"></div>
-                <div class="form-group"><label>Роль</label>
+                <!-- Роль и команда — только для чужих карточек -->
+                <div class="form-group" id="editRoleGroup"><label>Роль</label>
                     <select name="role" id="editUserRole">
                         <option value="employee">Сотрудник</option>
                         <option value="teamlead">Тим Лид</option>
                         <option value="admin">Администратор</option>
                     </select>
                 </div>
-                <div class="form-group"><label>Команда</label>
+                <div class="form-group" id="editTeamGroup"><label>Команда</label>
                     <select name="team_id" id="editUserTeam">
                         <option value="">— без команды —</option>
                         <?php foreach ($allTeams as $t): ?>
@@ -500,6 +447,7 @@ $currentTime = date('H:i');
     document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) closeModals(); }));
 
     function openEditUserModal(id, name, login, role, teamId, position, project) {
+        const isSelf = (id === <?php echo $user['id']; ?>);
         document.getElementById('editUserId').value       = id;
         document.getElementById('editUserName').value     = name;
         document.getElementById('editUserLogin').value    = login;
@@ -507,6 +455,13 @@ $currentTime = date('H:i');
         document.getElementById('editUserTeam').value     = teamId || '';
         document.getElementById('editUserPosition').value = position;
         document.getElementById('editUserProject').value  = project;
+
+        // Своя карточка: показываем логин/пароль, скрываем роль/команду
+        document.getElementById('editLoginGroup').style.display    = isSelf ? '' : 'none';
+        document.getElementById('editPasswordGroup').style.display = isSelf ? '' : 'none';
+        document.getElementById('editRoleGroup').style.display     = isSelf ? 'none' : '';
+        document.getElementById('editTeamGroup').style.display     = isSelf ? 'none' : '';
+
         openModal('editUserModal');
     }
     function openEditTeamModal(id, name, desc) {
