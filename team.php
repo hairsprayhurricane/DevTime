@@ -33,7 +33,7 @@ require 'layout.php';
 <section class="page-content">
     <div class="container">
         <div class="section-header">
-            <h2>👥 Моя команда</h2>
+            <h2>👥 Мои команды</h2>
         </div>
 
         <?php if ($msg): ?>

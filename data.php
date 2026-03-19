@@ -8,7 +8,7 @@ define('DB_HOST', '127.0.0.1');
 define('DB_PORT', '5432');
 define('DB_NAME', 'devtime');
 define('DB_USER', 'postgres');
-define('DB_PASS', '12341234');
+define('DB_PASS', '12345');
 
 function getDB(): PDO {
     static $pdo = null;
@@ -127,10 +127,9 @@ function getEmployees(string $filterDate = '', string $filterWeek = 'current', ?
     foreach ($employees as &$emp) {
         $emp['status']          = getUserStatus($emp['id']);
         $emp['current_session'] = getSessionStart($emp['id']);
-        $daily                  = getDailyReport($emp['id'], $filterDate);
-        $emp['total_today']     = $daily ? round($daily['total_work_minutes'] / 60, 1) : 0;
-        $emp['total_week']      = getWeeklyHours($emp['id'], $filterWeek);
-        $emp['overtime']        = $daily ? round($daily['overtime_minutes'] / 60, 1) : 0;
+        $emp['total_today']     = getLiveMinutesForDate($emp['id'], $filterDate);
+        $emp['total_week']      = getWeeklyMinutes($emp['id'], $filterWeek);
+        $emp['overtime']        = max(0, $emp['total_today'] - 480);
     }
     unset($emp);
     return $employees;
@@ -146,7 +145,27 @@ function getDailyReport(int $userId, string $date = ''): ?array {
     return $stmt->fetch() ?: null;
 }
 
+// Считает рабочие минуты за день прямо из work_logs (включая текущий незакрытый отрезок)
+function getLiveMinutesForDate(int $userId, string $date = ''): int {
+    $d = $date ?: date('Y-m-d');
+    $stmt = getDB()->prepare("
+        SELECT COALESCE(SUM(
+            EXTRACT(EPOCH FROM (COALESCE(ended_at, NOW()) - started_at)) / 60
+        ), 0)::INT
+        FROM work_logs
+        WHERE user_id = ?
+          AND type = 'work'
+          AND DATE(started_at) = ?
+    ");
+    $stmt->execute([$userId, $d]);
+    return (int)$stmt->fetchColumn();
+}
+
 function getWeeklyHours(int $userId, string $week = 'current'): float {
+    return round(getWeeklyMinutes($userId, $week) / 60, 1);
+}
+
+function getWeeklyMinutes(int $userId, string $week = 'current'): int {
     if ($week === 'prev') {
         $from = "DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '7 days'";
         $to   = "DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 day'";
@@ -158,12 +177,16 @@ function getWeeklyHours(int $userId, string $week = 'current'): float {
         $to   = "CURRENT_DATE";
     }
     $stmt = getDB()->prepare("
-        SELECT COALESCE(SUM(total_work_minutes), 0) AS mins
-        FROM daily_reports
-        WHERE user_id = ? AND report_date BETWEEN $from AND $to
+        SELECT COALESCE(SUM(
+            EXTRACT(EPOCH FROM (COALESCE(ended_at, NOW()) - started_at)) / 60
+        ), 0)::INT
+        FROM work_logs
+        WHERE user_id = ?
+          AND type = 'work'
+          AND DATE(started_at) BETWEEN $from AND $to
     ");
     $stmt->execute([$userId]);
-    return round($stmt->fetchColumn() / 60, 1);
+    return (int)$stmt->fetchColumn();
 }
 
 function getLogForUser(int $userId): ?array {
@@ -171,9 +194,9 @@ function getLogForUser(int $userId): ?array {
     if (!$daily) return null;
     return [
         'user_id'     => $userId,
-        'total_today' => round($daily['total_work_minutes'] / 60, 1),
-        'total_week'  => getWeeklyHours($userId),
-        'overtime'    => round($daily['overtime_minutes'] / 60, 1),
+        'total_today' => (int)$daily['total_work_minutes'],
+        'total_week'  => getWeeklyMinutes($userId),
+        'overtime'    => (int)$daily['overtime_minutes'],
     ];
 }
 
@@ -226,12 +249,16 @@ function getMembersOfTeam(int $teamId): array {
 }
 
 function getAllUsers(): array {
+    // DISTINCT ON (u.id) предотвращает дубли когда пользователь
+    // состоит в нескольких командах (LEFT JOIN team_members даёт
+    // по одной строке на каждую команду)
     $stmt = getDB()->query("
-        SELECT u.id, u.full_name AS name, u.login, u.position, u.project,
+        SELECT DISTINCT ON (u.id)
+               u.id, u.full_name AS name, u.login, u.position, u.project,
                r.name AS role, tm.team_id
         FROM users u
-        JOIN user_roles ur       ON ur.user_id = u.id
-        JOIN roles r             ON r.id = ur.role_id
+        JOIN user_roles ur        ON ur.user_id = u.id
+        JOIN roles r              ON r.id = ur.role_id
         LEFT JOIN team_members tm ON tm.user_id = u.id
         ORDER BY u.id
     ");

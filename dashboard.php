@@ -20,7 +20,6 @@ $tableLogs = ($user['role'] === 'employee')
     : $allEmps;
 $tableLogs = array_values($tableLogs);
 
-
 $pageTitle   = 'Дашборд';
 $activeNav   = 'dashboard';
 $extraCss    = '
@@ -41,6 +40,13 @@ $extraCss    = '
     #live-time { font-weight: 700; }
 ';
 require 'layout.php';
+
+// Принимает минуты, возвращает "Xч YYм"
+function formatMins(int $mins): string {
+    $h = intdiv($mins, 60);
+    $m = $mins % 60;
+    return "{$h}ч {$m}м";
+}
 ?>
 
 <!-- Панель управления -->
@@ -52,7 +58,6 @@ require 'layout.php';
         <div class="action-grid">
             <?php foreach ($visibleEmps as $emp):
                 $sl = statusLabel($emp['status']);
-                // Сотрудник управляет только своими кнопками
                 $canControl = ($user['role'] === 'teamlead' || $emp['id'] === $user['id']);
             ?>
             <div class="action-card" id="card-<?php echo $emp['id']; ?>">
@@ -130,11 +135,12 @@ require 'layout.php';
                         <th>За период</th>
                         <th>Переработка</th>
                         <th>Прогресс (40ч)</th>
+                    </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($tableLogs as $emp):
                         $sl       = statusLabel($emp['status']);
-                        $progress = min(100, ($emp['total_week'] / 40) * 100);
+                        $progress = min(100, ($emp['total_week'] / 2400) * 100); // 2400 мин = 40ч
                         $ovtReq   = ($emp['overtime'] > 0) ? getOvertimeRequest($emp['id']) : null;
                     ?>
                     <tr>
@@ -148,15 +154,15 @@ require 'layout.php';
                         <td><span class="project-tag"><?php echo htmlspecialchars($emp['project']); ?></span></td>
                         <td><span class="status-badge <?php echo $sl['class']; ?>"><?php echo $sl['text']; ?></span></td>
                         <td><?php echo htmlspecialchars($emp['current_session']); ?></td>
-                        <td class="hours-positive"><?php echo $emp['total_today']; ?> ч</td>
-                        <td class="<?php echo $emp['total_week'] > 40 ? 'hours-warning' : 'hours-positive'; ?>">
-                            <?php echo $emp['total_week']; ?> ч
+                        <td class="hours-positive"><?php echo formatMins($emp['total_today']); ?></td>
+                        <td class="<?php echo $emp['total_week'] > 2400 ? 'hours-warning' : 'hours-positive'; ?>">
+                            <?php echo formatMins($emp['total_week']); ?>
                         </td>
                         <td>
                             <?php if ($ovtReq): ?>
                                 <?php if ($ovtReq['status'] === 'pending' && $user['role'] === 'teamlead'): ?>
                                     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                                        <span class="hours-warning"><?php echo $emp['overtime']; ?> ч</span>
+                                        <span class="hours-warning"><?php echo formatMins($emp['overtime']); ?></span>
                                         <form method="POST" action="actions.php" style="display:inline">
                                             <input type="hidden" name="action"     value="approve_overtime">
                                             <input type="hidden" name="request_id" value="<?php echo $ovtReq['id']; ?>">
@@ -171,14 +177,14 @@ require 'layout.php';
                                         </form>
                                     </div>
                                 <?php elseif ($ovtReq['status'] === 'approved'): ?>
-                                    <span style="color:#16a34a;font-weight:600;"><?php echo $emp['overtime']; ?> ч ✓</span>
+                                    <span style="color:#16a34a;font-weight:600;"><?php echo formatMins($emp['overtime']); ?> ✓</span>
                                 <?php elseif ($ovtReq['status'] === 'rejected'): ?>
-                                    <span style="color:#94a3b8;text-decoration:line-through;"><?php echo $emp['overtime']; ?> ч</span>
+                                    <span style="color:#94a3b8;text-decoration:line-through;"><?php echo formatMins($emp['overtime']); ?></span>
                                 <?php else: ?>
-                                    <span class="hours-warning"><?php echo $emp['overtime']; ?> ч</span>
+                                    <span class="hours-warning"><?php echo formatMins($emp['overtime']); ?></span>
                                 <?php endif; ?>
                             <?php else: ?>
-                                <span class="hours-warning"><?php echo $emp['overtime']; ?> ч</span>
+                                <span class="hours-warning"><?php echo formatMins($emp['overtime']); ?></span>
                             <?php endif; ?>
                         </td>
                         <td style="min-width:150px;">
@@ -193,23 +199,24 @@ require 'layout.php';
             </table>
         </div>
 
-        <!-- Итоги -->
+        <!-- Итоги — только для тимлида -->
+        <?php if ($user['role'] === 'teamlead'): ?>
         <div class="summary-cards">
             <?php
-                $totalWeek   = array_sum(array_column($tableLogs, 'total_week'));
-                $totalOvt    = array_sum(array_column($tableLogs, 'overtime'));
-                $workingNow  = count(array_filter($tableLogs, fn($e) => $e['status'] === 'working'));
-                $cnt         = count($tableLogs);
+                $totalWeekMins = array_sum(array_column($tableLogs, 'total_week'));
+                $totalOvtMins  = array_sum(array_column($tableLogs, 'overtime'));
+                $workingNow    = count(array_filter($tableLogs, fn($e) => $e['status'] === 'working'));
+                $cnt           = count($tableLogs);
             ?>
             <div class="summary-card">
-                <h4>Всего часов за неделю</h4>
-                <div class="value"><?php echo $totalWeek; ?></div>
+                <h4>Всего часов за период</h4>
+                <div class="value"><?php echo formatMins($totalWeekMins); ?></div>
                 <div class="sub">по всем сотрудникам</div>
             </div>
             <div class="summary-card">
                 <h4>Переработка</h4>
-                <div class="value"><?php echo $totalOvt; ?></div>
-                <div class="sub">часов сверх нормы</div>
+                <div class="value"><?php echo formatMins($totalOvtMins); ?></div>
+                <div class="sub">сверх нормы</div>
             </div>
             <div class="summary-card">
                 <h4>Сейчас работают</h4>
@@ -218,10 +225,10 @@ require 'layout.php';
             </div>
             <div class="summary-card">
                 <h4>Средняя нагрузка</h4>
-                <div class="value"><?php echo $cnt > 0 ? round($totalWeek / $cnt, 1) : 0; ?></div>
-                <div class="sub">часов на сотрудника</div>
+                <div class="value"><?php echo $cnt > 0 ? formatMins((int)round($totalWeekMins / $cnt)) : '0ч 0м'; ?></div>
+                <div class="sub">на сотрудника</div>
             </div>
-        </div>
+        <?php endif; ?>
     </div>
 </section>
 
@@ -233,8 +240,8 @@ require 'layout.php';
 </footer>
 
 <script>
-    // Авто-обновление страницы каждые 10 сек для синхронизации статусов
-    setTimeout(() => location.reload(), 10000);
+    // Перезагружаем страницу каждые 60 секунд для обновления данных
+    setTimeout(() => location.reload(), 60000);
 </script>
 </body>
 </html>

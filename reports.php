@@ -9,7 +9,6 @@ if (isset($_POST['export'])) {
     $dateTo   = $_POST['date_to']   ?? date('Y-m-d');
     $db       = getDB();
 
-    // Тим лид видит всех, сотрудник — только себя
     if ($user['role'] === 'employee') {
         $stmt = $db->prepare("
             SELECT u.full_name, u.position, u.project,
@@ -62,15 +61,25 @@ if (isset($_POST['export'])) {
 
     $rows = $stmt->fetchAll();
 
-    // Сбрасываем любой буферизованный вывод перед отправкой CSV
+    // Сбрасываем буфер чтобы HTML не попал в CSV
     while (ob_get_level()) ob_end_clean();
 
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="devtime_report_' . $dateFrom . '_' . $dateTo . '.csv"');
+
     $out = fopen('php://output', 'w');
+    // BOM для корректного открытия в Excel
     fputs($out, "\xEF\xBB\xBF");
-    fputcsv($out, ['Сотрудник','Должность','Проект','Дата','Начало смены','Конец смены','Часов за день','Переработка (мин)'], ';');
+
+    // Передаём escape='' чтобы убрать Deprecated warning в PHP 8.4
+    fputcsv($out, ['Сотрудник','Должность','Проект','Дата','Начало смены','Конец смены','Часов за день','Переработка (мин)'], ';', '"', '');
+
     foreach ($rows as $r) {
+        $mins  = (int)$r['total_work_minutes'];
+        $h     = intdiv($mins, 60);
+        $m     = $mins % 60;
+        $hours = "{$h}ч {$m}м";
+
         fputcsv($out, [
             $r['full_name'],
             $r['position'],
@@ -78,10 +87,11 @@ if (isset($_POST['export'])) {
             $r['report_date'] ? date('d.m.Y', strtotime($r['report_date'])) : '—',
             $r['shift_start'] ? date('H:i', strtotime($r['shift_start'])) : '—',
             $r['shift_end']   ? date('H:i', strtotime($r['shift_end']))   : '—',
-            number_format($r['total_work_minutes'] / 60, 1, '.', ''),
+            $hours,
             $r['overtime_minutes'],
-        ], ';');
+        ], ';', '"', '');
     }
+
     fclose($out);
     exit;
 }
@@ -138,7 +148,7 @@ require 'layout.php';
                 <ul>
                     <li>Сотрудник, должность, проект</li>
                     <li>Дата, начало и конец смены</li>
-                    <li>Часов за день (из daily_reports)</li>
+                    <li>Часов за день (например: 7ч 34м)</li>
                     <li>Переработка в минутах</li>
                     <?php if ($user['role'] === 'teamlead'): ?>
                     <li>Данные по всем сотрудникам</li>
